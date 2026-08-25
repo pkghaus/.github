@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/pkghaus/.github/blob/master/SECURITY.md
+    about: Do not open an issue. Email security@pkg.haus.
+  - name: Installation instructions
+    url: https://pkg.haus
+    about: How to add the archive and install a package.
+  - name: What changed in the archive
+    url: https://apt.pkg.haus/news/
+    about: Added, updated and retired packages, with an RSS feed.

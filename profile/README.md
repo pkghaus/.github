@@ -19,6 +19,10 @@ sudo apt install <package>
 ```
 
 The package pool is browsable at [apt.pkg.haus](https://apt.pkg.haus).
+Added, updated and retired packages are listed at
+[apt.pkg.haus/news](https://apt.pkg.haus/news/), with an
+[RSS feed](https://apt.pkg.haus/news/feed.xml). Download counts, measured at
+the edge, are published at [apt.pkg.haus/stats](https://apt.pkg.haus/stats).
 
 ## How it works
 
@@ -29,3 +33,17 @@ The package pool is browsable at [apt.pkg.haus](https://apt.pkg.haus).
   the build action and per-suite builder images, native amd64 and arm64,
   with provenance and SBOMs. Also on the
   [GitHub Marketplace](https://github.com/marketplace/actions/action-debian-build).
+- [archive-keyring](https://github.com/pkghaus/archive-keyring): the signing
+  key as a package, so key rotations arrive through `apt upgrade`. Its
+  fingerprint is in [SECURITY.md](https://github.com/pkghaus/.github/blob/master/SECURITY.md).
+
+## Buy us a coffee?
+
+If you feel like buying us a coffee (or a beer?), donations are welcome:
+
+```
+BTC : bc1qq04jnuqqavpccfptmddqjkg7cuspy3new4sxq9
+DOGE: DRBkryyau5CMxpBzVmrBAjK6dVdMZSBsuS
+ETH : 0x2238A11856428b72E80D70Be8666729497059d95
+LTC : MQwXsBrArLRHQzwQZAjJPNrxGS1uNDDKX6
+```
