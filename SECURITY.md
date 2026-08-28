@@ -2,24 +2,29 @@
 
 ## Reporting a vulnerability
 
-Email **security@pkg.haus**. Please include enough to reproduce, and give us
-a chance to ship a fix before disclosing publicly.
+Use GitHub's private vulnerability reporting: open the **Security** tab on the
+affected repository and choose **Report a vulnerability**. The report stays
+private to you and us, and it keeps the discussion attached to the code it
+concerns.
 
-This address is also published at
+If you would rather use email, write to **security@pkg.haus**. That address is
+also published at
 [apt.pkg.haus/.well-known/security.txt](https://apt.pkg.haus/.well-known/security.txt)
 per RFC 9116.
 
-Please report privately rather than opening an issue. Every repository in
-this organisation is public, and GitHub keeps a public edit history of issue
+Either way, please include enough to reproduce, and give us a chance to ship a
+fix before disclosing publicly.
+
+Please do not open a public issue. GitHub keeps a public edit history of issue
 and comment bodies, so a leak cannot be taken back by editing.
 
 ## What is in scope
 
 - The archive at **apt.pkg.haus**: the signed indices, the pool, the keyring
   package, and the edge that serves them.
-- The **packaging** in the `*-debian` repositories: `debian/rules`,
-  build-time dependency handling, anything that affects what lands in a
-  binary package.
+- The **packaging** in [packages](https://github.com/pkghaus/packages):
+  `debian/rules`, build-time dependency handling, anything that affects what
+  lands in a binary package.
 - The **build pipeline**: `action-debian-build`, the builder images, the
   ingest that publishes to the archive.
 - **pkg.haus** and its setup instructions. Bad instructions are a real
