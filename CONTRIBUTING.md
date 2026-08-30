@@ -18,8 +18,8 @@ automatically rather than by someone squinting at `--version`.
 
 ## Reporting a broken package
 
-Open an issue on the packaging repository (`<name>-debian`), not on `apt`,
-unless the archive itself is at fault. What helps:
+Open an issue on [packages](https://github.com/pkghaus/packages), naming the
+package, unless the archive itself is at fault. What helps:
 
 ```sh
 apt policy <package>          # which version, from which suite
@@ -38,13 +38,15 @@ security@pkg.haus.
 
 ## Changing packaging
 
-Pull requests are welcome on `debian/` in any packaging repository. Two
-things to know:
+Pull requests are welcome on any package's `debian/` directory in
+[packages](https://github.com/pkghaus/packages). Two things to know:
 
-- **Version bumps are deliberately manual.** A tag triggers a build and a
-  publish, and a bump often needs packaging changes that only a build and a
-  functional test reveal. A PR that only edits `package.conf` is not enough
-  on its own.
+- **Version bumps are opened automatically** every six hours, already built
+  and tested across every suite, so a pull request that only edits
+  `package.conf` is usually already there. Merging one is not a release: the
+  archive publishes on a signed tag, which stays manual. A bump needing
+  packaging changes shows up as a failed verification rather than as a pull
+  request, so those are the ones worth a contribution.
 - **Every published version is immutable.** Once a version is in the pool it
   is never rebuilt with different bytes; a fix ships as a new Debian
   revision.
