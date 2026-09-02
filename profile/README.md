@@ -30,22 +30,24 @@ is something you can check rather than something we assert.
 
 ## How it works
 
-- [packages](https://github.com/pkghaus/packages): every package's Debian
-  packaging, one directory each. Merging a changelog entry builds the release
-  across both architectures and all three suites, tags it, and tells the archive.
-- [apt](https://github.com/pkghaus/apt): the archive. Its ingest builds each
-  enrolled package's newest release from source and publishes only what the
-  archive lacks.
 - [action-debian-build](https://github.com/pkghaus/action-debian-build):
   the build action and per-suite builder images, native amd64 and arm64,
   with provenance and SBOMs. Also on the
   [GitHub Marketplace](https://github.com/marketplace/actions/action-debian-build).
-- [archive-keyring](https://github.com/pkghaus/archive-keyring): the signing
-  key as a package, so key rotations arrive through `apt upgrade`. Its
-  fingerprint is in [SECURITY.md](https://github.com/pkghaus/.github/blob/master/SECURITY.md).
+- [apt](https://github.com/pkghaus/apt): the archive. Its ingest builds each
+  enrolled package's newest release from source and publishes only what the
+  archive lacks.
 - [buildinfos](https://github.com/pkghaus/buildinfos): the build records. What
   each package was built from and with, published beside the source package it
   was built from, which is what lets `debrebuild` reproduce it.
+- [packages](https://github.com/pkghaus/packages): every package's Debian
+  packaging, one directory each. Merging a changelog entry builds the release
+  across both architectures and all three suites, tags it, and tells the archive.
+  It also holds
+  [pkghaus-archive-keyring](https://github.com/pkghaus/packages/tree/master/pkghaus-archive-keyring),
+  the signing key as a package, so key rotations arrive through `apt upgrade`.
+  Its fingerprint is in
+  [SECURITY.md](https://github.com/pkghaus/.github/blob/master/SECURITY.md).
 
 ## Buy us a coffee?
 
