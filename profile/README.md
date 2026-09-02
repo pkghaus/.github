@@ -24,11 +24,18 @@ Added, updated and retired packages are listed at
 [RSS feed](https://apt.pkg.haus/news/feed.xml). Download counts, measured at
 the edge, are published at [apt.pkg.haus/stats](https://apt.pkg.haus/stats).
 
+Every published version's build record and the source package it was built from
+are at [buildinfos.pkg.haus](https://buildinfos.pkg.haus), so "built from source"
+is something you can check rather than something we assert.
+
 ## How it works
 
-- [apt](https://github.com/pkghaus/apt): the archive. A packaging
-  repository's validated tag triggers the ingest, which builds the release
-  from source and publishes only what the archive lacks.
+- [packages](https://github.com/pkghaus/packages): every package's Debian
+  packaging, one directory each. Merging a changelog entry builds the release
+  across both architectures and all three suites, tags it, and tells the archive.
+- [apt](https://github.com/pkghaus/apt): the archive. Its ingest builds each
+  enrolled package's newest release from source and publishes only what the
+  archive lacks.
 - [action-debian-build](https://github.com/pkghaus/action-debian-build):
   the build action and per-suite builder images, native amd64 and arm64,
   with provenance and SBOMs. Also on the
@@ -36,6 +43,9 @@ the edge, are published at [apt.pkg.haus/stats](https://apt.pkg.haus/stats).
 - [archive-keyring](https://github.com/pkghaus/archive-keyring): the signing
   key as a package, so key rotations arrive through `apt upgrade`. Its
   fingerprint is in [SECURITY.md](https://github.com/pkghaus/.github/blob/master/SECURITY.md).
+- [buildinfos](https://github.com/pkghaus/buildinfos): the build records. What
+  each package was built from and with, published beside the source package it
+  was built from, which is what lets `debrebuild` reproduce it.
 
 ## Buy us a coffee?
 
