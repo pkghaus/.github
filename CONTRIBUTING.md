@@ -41,12 +41,14 @@ security@pkg.haus.
 Pull requests are welcome on any package's `debian/` directory in
 [packages](https://github.com/pkghaus/packages). Two things to know:
 
-- **Version bumps are opened automatically** every six hours, already built
-  and tested across every suite, so a pull request that only edits
-  `package.conf` is usually already there. Merging one is not a release: the
-  archive publishes on a signed tag, which stays manual. A bump needing
-  packaging changes shows up as a failed verification rather than as a pull
-  request, so those are the ones worth a contribution.
+- **Version bumps land automatically** every six hours, already built and
+  DEP-8 tested across every suite before they land, so a change that only
+  edits `package.conf` has usually happened already. Nothing approves them and
+  there is no pull request to review: a bump that verifies commits straight to
+  `master`, and landing is releasing -- the commit tags the package and tells
+  the archive to ingest. A bump that needs packaging changes fails
+  verification and does not land, and those are the ones worth a
+  contribution. The `Upstream release drift` issue on `packages` lists them.
 - **Every published version is immutable.** Once a version is in the pool it
   is never rebuilt with different bytes; a fix ships as a new Debian
   revision.
