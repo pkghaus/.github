@@ -132,18 +132,19 @@ render() { # <file> [<suppressions-file>] [<today>]
     # Short on purpose. Someone opening this wants to act, not to read the case
     # for the tool existing; that lives in the runbook. Only the two things
     # that look like bugs and are not get explained.
+    #
+    # ONE LINE PER PARAGRAPH, however long. GitHub Flavored Markdown renders a
+    # single newline inside a paragraph as a line break in ISSUES and comments,
+    # unlike a .md file in a repository where it reflows. A comfortably wrapped
+    # heredoc therefore came out broken at every one of its source line
+    # endings, which is what it looked like: text wrapping where nothing should
+    # wrap. Let the browser wrap it.
     cat <<PREAMBLE
-Dependency and security state across this organization, written weekly by
-\`digest.yml\`.
+Dependency and security state across this organization, written weekly by \`digest.yml\`.
 
-**Not a status page.** It opens only when something needs attention and closes
-when nothing does: open means work, closed means clean.
+**Not a status page.** It opens only when something needs attention and closes when nothing does: open means work, closed means clean.
 
-Two things that look wrong and are not. A repository under **npm audit** but
-not under **Dependabot alerts** is the expected case, because GitHub's alerts
-under-report and this runs the auditor itself. And **Known and blocked**
-findings are understood and cannot be fixed here yet, so they are listed
-without holding the issue open (see \`suppressions.tsv\`).
+Two things that look wrong and are not. A repository under **npm audit** but not under **Dependabot alerts** is the expected case, because GitHub's alerts under-report and this runs the auditor itself. And **Known and blocked** findings are understood and cannot be fixed here yet, so they are listed without holding the issue open (see \`suppressions.tsv\`).
 
 PREAMBLE
     # A team cannot be an issue assignee on GitHub, so the team reaches its

@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=45
+EXPECTED_ASSERTIONS=46
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -124,6 +124,17 @@ case "$body" in *"under-report"*) ok "the body explains why npm audit differs fr
 lines="$(printf '%s\n' "$body" | sed -n '1,/^## /p' | grep -c .)"
 if [ "$lines" -le 14 ]; then ok "the preamble stays short ($lines lines)"
 else no "the preamble stays short" "$lines lines before the first section"; fi
+
+# One line per paragraph, however long. GitHub renders a single newline inside a
+# paragraph as a LINE BREAK in issues, unlike a .md file in a repository, so a
+# hand-wrapped paragraph comes out broken at every source line ending. The
+# signature of the bug is a non-blank line followed by another non-blank line.
+wrapped="$(printf '%s\n' "$body" | sed -n '1,/^## /p' | awk '
+    /^#|^-|^\||^cc /  { prev=""; next }
+    NF && prev        { n++ }
+    { prev = NF ? $0 : "" }
+    END { print n+0 }')"
+eq "no preamble paragraph is hand-wrapped" 0 "$wrapped"
 # A body rewritten in place looks equally fresh whenever you read it.
 case "$(DIGEST_RUN_AT='2026-01-02 03:04:05 UTC' render "$f")" in
     *"Last run 2026-01-02 03:04:05 UTC"*) ok "the body stamps which run wrote it" ;;
