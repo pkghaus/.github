@@ -121,7 +121,23 @@ render() { # <file> [<suppressions-file>] [<today>]
     classify active "$@" > "$act"
     classify blocked "$@" > "$blk"
 
-    printf '%s\n\n' "This issue is opened by \`digest.yml\` when something needs attention and closed when nothing does. It is not a status page."
+    # Short on purpose. Someone opening this wants to act, not to read the case
+    # for the tool existing; that lives in the runbook. Only the two things
+    # that look like bugs and are not get explained.
+    cat <<PREAMBLE
+Dependency and security state across this organization, written weekly by
+\`digest.yml\`.
+
+**Not a status page.** It opens only when something needs attention and closes
+when nothing does: open means work, closed means clean.
+
+Two things that look wrong and are not. A repository under **npm audit** but
+not under **Dependabot alerts** is the expected case, because GitHub's alerts
+under-report and this runs the auditor itself. And **Known and blocked**
+findings are understood and cannot be fixed here yet, so they are listed
+without holding the issue open (see \`suppressions.tsv\`).
+
+PREAMBLE
     # A team cannot be an issue assignee on GitHub, so the team reaches its
     # members through a mention instead. The assignee is set separately by the
     # workflow and must be a user.
@@ -179,6 +195,11 @@ render() { # <file> [<suppressions-file>] [<today>]
         }' "$blk"
         printf '\n'
     fi
+
+    printf -- '---\n\n'
+    printf 'Last run %s' "${DIGEST_RUN_AT:-$(date -u +'%Y-%m-%d %H:%M:%S UTC')}"
+    [ -z "${DIGEST_RUN_URL:-}" ] || printf ' ([run](%s))' "$DIGEST_RUN_URL"
+    printf '. The body is rewritten in place on every run, so this timestamp is the age of what you are reading.\n'
 
     rm -f "$act" "$blk"
 }

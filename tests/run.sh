@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=35
+EXPECTED_ASSERTIONS=39
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -64,7 +64,7 @@ case "$(render "$f" "$sup" 2026-09-12)" in
     *"upstream has shipped nothing"*) ok "the reason travels with it" ;;
     *) no "the reason travels with it" ;; esac
 case "$(render "$f" "$sup" 2026-09-12)" in
-    *"npm audit"*) no "a suppressed row is not double counted in its own section" ;;
+    *"## npm audit"*) no "a suppressed row is not double counted in its own section" ;;
     *) ok "a suppressed row is not double counted in its own section" ;; esac
 
 # The expiry is the whole point: past the date it counts again, so a
@@ -99,10 +99,26 @@ f="$(t 'alert\tapt\tHIGH\tsharp\tGHSA-x\n')"
 body="$(render "$f")"
 case "$body" in *"Dependabot alerts (1)"*) ok "the alert section renders with its count" ;;
                 *) no "the alert section renders" "$body" ;; esac
-case "$body" in *"npm audit"*) no "an empty section is omitted" "npm audit heading present with no rows" ;;
+case "$body" in *"## npm audit"*) no "an empty section is omitted" "the heading is present with no rows" ;;
                 *) ok "an empty section is omitted" ;; esac
-case "$body" in *"not a status page"*) ok "the body says what the issue is for" ;;
+case "$body" in *"Not a status page"*) ok "the body says what the issue is for" ;;
                 *) no "the body says what the issue is for" ;; esac
+# The case for the tool existing belongs in the runbook, not in front of
+# someone trying to act. What must survive is the one thing that reads as a
+# defect and is not: npm audit naming a repository the alerts do not.
+case "$body" in *"under-report"*) ok "the body explains why npm audit differs from alerts" ;;
+                *) no "the body explains why npm audit differs from alerts" ;; esac
+# And it must stay short, or it stops being read at all.
+lines="$(printf '%s\n' "$body" | sed -n '1,/^## /p' | grep -c .)"
+if [ "$lines" -le 14 ]; then ok "the preamble stays short ($lines lines)"
+else no "the preamble stays short" "$lines lines before the first section"; fi
+# A body rewritten in place looks equally fresh whenever you read it.
+case "$(DIGEST_RUN_AT='2026-01-02 03:04:05 UTC' render "$f")" in
+    *"Last run 2026-01-02 03:04:05 UTC"*) ok "the body stamps which run wrote it" ;;
+    *) no "the body stamps which run wrote it" ;; esac
+case "$(DIGEST_RUN_AT=x DIGEST_RUN_URL=https://example.invalid/r/1 render "$f")" in
+    *"https://example.invalid/r/1"*) ok "the stamp links the run when one is known" ;;
+    *) no "the stamp links the run when one is known" ;; esac
 case "$body" in *"cc @"*) no "no team is mentioned when none is configured" ;;
                 *) ok "no team is mentioned when none is configured" ;; esac
 # A team cannot be an assignee on GitHub, so this mention is how it is reached.

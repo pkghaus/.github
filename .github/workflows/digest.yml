@@ -63,7 +63,11 @@ jobs:
           ASSIGNEE: ${{ vars.DIGEST_ASSIGNEE }}
           DIGEST_TEAM: ${{ vars.DIGEST_TEAM }}
           REPO: ${{ github.repository }}
-          TITLE: Dependency digest
+          # Stamped on CREATION only and never edited afterwards, so it stays
+          # the date the finding appeared rather than the date of the last run.
+          # That is what tells several closed digests apart in the issue list;
+          # the body carries the last-run time, which does change.
+          DIGEST_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           existing="$(gh issue list --repo "$REPO" --state open --label dependency-digest \
@@ -87,6 +91,6 @@ jobs:
           else
               gh label create dependency-digest --repo "$REPO" \
                   --description "Weekly dependency and security digest" --color FBCA04 2>/dev/null || true
-              gh issue create --repo "$REPO" --title "$TITLE" --body-file body.md \
+              gh issue create --repo "$REPO" --title "Dependency digest (opened $(date -u +%F))" --body-file body.md \
                   --label dependency-digest ${ASSIGNEE:+--assignee "$ASSIGNEE"}
           fi
