@@ -187,11 +187,15 @@ PREAMBLE
     if [ "$n" -gt 0 ]; then
         printf '## Known and blocked (%s)\n\n' "$n"
         printf 'Not counted as needing attention. Each stops being suppressed on its review date, at which point it returns to the sections above.\n\n'
-        printf '| repo | finding | review by | why |\n|---|---|---|---|\n'
+        # A list, NOT a table. The reason is free text and runs to a few
+        # hundred characters; in a table cell it dominates the column widths
+        # and GitHub squeezes every other column until the repository name and
+        # the advisory id wrap mid-token. The short-celled sections above stay
+        # tables because they render fine as one.
         awk -F'\t' '{
             key = ($1=="audit") ? $6 : ($1=="alert") ? $5 : $3
             n = NF
-            printf "| %s | %s %s | %s | %s |\n", $2, $1, key, $(n-1), $n
+            printf "- **%s** %s `%s`, review by **%s**\n  %s\n", $2, $1, key, $(n-1), $n
         }' "$blk"
         printf '\n'
     fi
