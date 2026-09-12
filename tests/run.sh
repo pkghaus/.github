@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+#
+# The two functions that decide anything are pure functions of the TSV, which is
+# the reason digest.sh is split the way it is: everything here runs without a
+# network or a token.
+#
+#   tests/run.sh
+#
+# What stops this reporting success for work it did not do: groups report
+# failure by exit status, which says nothing about an assertion that never RAN.
+# Update the count deliberately, so the edit is someone noticing it moved.
+
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+EXPECTED_ASSERTIONS=24
+fail=0
+TALLY="$(mktemp)"
+trap 'rm -f "$TALLY"' EXIT
+
+ok() { printf '  ok   %s\n' "$1"; echo ok >> "$TALLY"; }
+no() { printf '  FAIL %s\n    %s\n' "$1" "${2:-}"; fail=$((fail + 1)); echo no >> "$TALLY"; }
+eq() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1" "got [$3] want [$2]"; fi; }
+
+# shellcheck source=scripts/digest.sh
+. "$ROOT/scripts/digest.sh"
+
+work="$(mktemp -d)"
+trap 'rm -f "$TALLY"; rm -rf "$work"' EXIT
+t() { printf '%b' "$1" > "$work/rows.tsv"; printf '%s' "$work/rows.tsv"; }
+
+echo "== findings: the issue exists only when something is wrong =="
+f="$(t '')"
+if findings "$f"; then no "an empty file reports nothing"; else ok "an empty file reports nothing"; fi
+
+f="$(t '\n\n')"
+if findings "$f"; then no "blank lines alone report nothing"; else ok "blank lines alone report nothing"; fi
+
+# A file that is technically non-empty but says nothing must still close the
+# issue, or a stray newline keeps a stale issue standing forever.
+f="$(t '# nothing this week\n')"
+if findings "$f"; then no "a comment alone reports nothing"; else ok "a comment alone reports nothing"; fi
+
+f="$(t 'alert\tapt\tHIGH\tsharp\tGHSA-x\n')"
+if findings "$f"; then ok "one row reports something"; else no "one row reports something"; fi
+
+echo "== render: a section with no rows is omitted, not shown empty =="
+f="$(t 'alert\tapt\tHIGH\tsharp\tGHSA-x\n')"
+body="$(render "$f")"
+case "$body" in *"Dependabot alerts (1)"*) ok "the alert section renders with its count" ;;
+                *) no "the alert section renders" "$body" ;; esac
+case "$body" in *"npm audit"*) no "an empty section is omitted" "npm audit heading present with no rows" ;;
+                *) ok "an empty section is omitted" ;; esac
+case "$body" in *"not a status page"*) ok "the body says what the issue is for" ;;
+                *) no "the body says what the issue is for" ;; esac
+case "$body" in *"cc @"*) no "no team is mentioned when none is configured" ;;
+                *) ok "no team is mentioned when none is configured" ;; esac
+# A team cannot be an assignee on GitHub, so this mention is how it is reached.
+case "$(DIGEST_TEAM=pkghaus/maintainers render "$f")" in
+    *"cc @pkghaus/maintainers"*) ok "a configured team is mentioned in the body" ;;
+    *) no "a configured team is mentioned in the body" ;; esac
+
+echo "== render: pull request age becomes stale wording at the threshold =="
+f="$(t 'pr\tapt\t7\tpassing\t2\tbump x\n')"
+case "$(render "$f")" in *"2 days |"*) ok "a fresh pull request is not called stale" ;;
+                         *) no "a fresh pull request is not called stale" ;; esac
+f="$(t 'pr\tapt\t7\tpassing\t9\tbump x\n')"
+case "$(render "$f")" in *"9 days, stale"*) ok "an old pull request is called stale" ;;
+                         *) no "an old pull request is called stale" ;; esac
+# The boundary itself, because >= and > is exactly the kind of thing that is
+# wrong for a week before anyone notices.
+f="$(t "pr\tapt\t7\tpassing\t$STALE_DAYS\tbump x\n")"
+case "$(render "$f")" in *"stale"*) ok "the threshold day itself counts as stale" ;;
+                         *) no "the threshold day itself counts as stale" ;; esac
+
+echo "== render: a title containing a pipe cannot break the table =="
+f="$(t 'pr\tapt\t7\tpassing\t1\tbump a\\|b\n')"
+case "$(render "$f")" in *'a\|b'*) ok "a pipe in a title stays escaped" ;;
+                         *) no "a pipe in a title stays escaped" "$(render "$f")" ;; esac
+
+echo "== audit_rows: npm audit json to rows =="
+out="$(printf '%s' '{"vulnerabilities":{"sharp":{"severity":"high"},"nanoid":{"severity":"moderate"}}}' \
+    | audit_rows apt worker)"
+eq "one row per vulnerability" 2 "$(printf '%s\n' "$out" | grep -c .)"
+case "$out" in *$'audit\tapt\tworker\thigh\tsharp'*) ok "rows carry repo, manifest, severity, package" ;;
+                *) no "rows carry repo, manifest, severity, package" "$out" ;; esac
+eq "rows are sorted by package" "nanoid" "$(printf '%s\n' "$out" | head -1 | cut -f5)"
+out="$(printf '%s' '{"vulnerabilities":{}}' | audit_rows apt worker)"
+eq "a clean audit yields no rows" "" "$out"
+# npm has emitted non-JSON on failure before; a crash here would take the whole
+# digest down with it rather than losing one manifest.
+out="$(printf '%s' 'npm error code ENOTFOUND' | audit_rows apt worker)"
+eq "unparseable audit output yields no rows rather than failing" "" "$out"
+
+echo "== coverage_rows: only what is OFF, and rulesets only where they are possible =="
+on='{"security_and_analysis":{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"enabled"}}}'
+eq "a fully covered public repo yields nothing" "" "$(printf '%s' "$on" | coverage_rows apt PUBLIC 1)"
+case "$(printf '%s' "$on" | coverage_rows apt PUBLIC 0)" in
+    *$'cover\tapt\truleset\tnone'*) ok "a public repo with no ruleset is a finding" ;;
+    *) no "a public repo with no ruleset is a finding" ;; esac
+off='{"security_and_analysis":{"secret_scanning":{"status":"disabled"}}}'
+out="$(printf '%s' "$off" | coverage_rows new PUBLIC 1)"
+eq "both scanning settings are reported when off or unset" 2 "$(printf '%s\n' "$out" | grep -c .)"
+
+# On this plan a private repository is refused rulesets outright and secret
+# scanning needs paid Advanced Security, so every check here would fire on wiki
+# and brand every week forever. The live dry run produced exactly those four
+# rows before this exemption existed.
+eq "a private repo yields nothing at all" "" "$(printf '%s' "$off" | coverage_rows wiki PRIVATE na)"
+eq "a private repo is not faulted for having no ruleset" "" "$(printf '%s' "$on" | coverage_rows brand PRIVATE na)"
+
+# It must DRAIN stdin before deciding. Exiting early hands the producer an
+# EPIPE, which pipefail turns into a failed pipeline and set -e turns into an
+# aborted run. A live dry run died that way after the alerts and before any
+# audit, and rendered as a quiet week. Reproduced with a producer large enough
+# that it cannot have been buffered away.
+if ( set -o pipefail
+     python3 -c 'print("x" * 200000)' | coverage_rows wiki PRIVATE na >/dev/null ); then
+    ok "an exempt repo still drains stdin, so the producer sees no EPIPE"
+else
+    no "an exempt repo still drains stdin" "the pipeline failed, which set -e would make fatal"
+fi
+
+printf '\n%s passed, %s failed\n' "$(grep -c ok "$TALLY")" "$fail"
+ran=$(grep -c . "$TALLY")
+if [ "$ran" -ne "$EXPECTED_ASSERTIONS" ]; then
+    printf 'FAIL  %s assertions ran, expected %s.\n' "$ran" "$EXPECTED_ASSERTIONS" >&2
+    exit 1
+fi
+[ "$fail" -eq 0 ]
