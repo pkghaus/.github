@@ -10,6 +10,14 @@ name: Dependency digest
 # because assignment notifies whatever a person's per-repo watch settings say,
 # where watching a repository for issues is a setting that can be changed or
 # reset without anyone noticing the digest stopped arriving.
+#
+# TWO tokens, on purpose. A personal access token always acts as the person who
+# created it, whatever its resource owner, so the first version opened the issue
+# as the assignee and then self-assigned it. GitHub does not notify you about
+# your own actions, so the notification the assignment existed for never
+# arrived. Reads need org-wide access and stay on the PAT; the issue is written
+# by GITHUB_TOKEN, which is scoped to this repository and acts as
+# github-actions[bot], so assigning a person is a real notification.
 
 on:
   schedule:
@@ -19,6 +27,8 @@ on:
 
 permissions:
   contents: read
+  # The issue is written by GITHUB_TOKEN, which acts as github-actions[bot].
+  issues: write
 
 concurrency:
   group: digest
@@ -57,7 +67,9 @@ jobs:
 
       - name: Open, update or close the issue
         env:
-          GH_TOKEN: ${{ secrets.DIGEST_TOKEN }}
+          # NOT DIGEST_TOKEN: that would author the issue as its creator and
+          # self-assign, which notifies nobody.
+          GH_TOKEN: ${{ github.token }}
           # A user. GitHub refuses a team as an assignee, so the team is
           # mentioned in the body instead, which notifies its members.
           ASSIGNEE: ${{ vars.DIGEST_ASSIGNEE }}
