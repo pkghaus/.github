@@ -46,18 +46,80 @@ STALE_DAYS="${DIGEST_STALE_DAYS:-7}"
 
 # --- pure, and therefore the parts worth testing -----------------------------
 
+# Split rows into the ones that need attention and the ones already known.
+#
+# A suppression says "known, understood, cannot be fixed here yet". It does not
+# hide the finding: the row still renders, in its own section, with the reason
+# and a date. What it does is stop the finding holding the issue open, because
+# an issue that can never close stops being read, which is the same disease as
+# one that lists successes.
+#
+# Every suppression carries a review date and STOPS APPLYING once it passes, so
+# the finding returns and the issue reopens. A suppression without an expiry is
+# a silent pin.
+#
+# mode is "active" or "blocked". Blocked rows gain the review date and reason as
+# two more fields.
+classify() { # <mode> <rows-file> [<suppressions-file>] [<today>]
+    local mode="${1:?}" rows="${2:?}"
+    local sup="${3:-$(dirname "${BASH_SOURCE[0]}")/../suppressions.tsv}"
+    local today="${4:-$(date -u +%F)}"
+    # shellcheck disable=SC2016  # python source, the shell must expand nothing
+    python3 -c '
+import sys
+mode, rows, sup, today = sys.argv[1:5]
+KEY = {"audit": 5, "alert": 4, "cover": 2, "pr": 2}   # zero-based field index
+
+rules = {}
+try:
+    for line in open(sup):
+        line = line.rstrip("\n")
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        f = line.split("\t")
+        if len(f) < 5:
+            continue
+        rules[(f[0], f[1], f[2])] = (f[3], f[4])
+except FileNotFoundError:
+    pass
+
+for line in open(rows):
+    line = line.rstrip("\n")
+    if not line.strip() or line.lstrip().startswith("#"):
+        continue
+    f = line.split("\t")
+    idx = KEY.get(f[0])
+    rule = rules.get((f[0], f[1], f[len(f) > idx and idx or 0])) if idx is not None and len(f) > idx else None
+    # An expired suppression is no suppression. Past the date the finding counts
+    # again, which is what forces a second look instead of a permanent pin.
+    if rule and rule[0] >= today:
+        if mode == "blocked":
+            print(line + "\t" + rule[0] + "\t" + rule[1])
+    elif mode == "active":
+        print(line)
+' "$mode" "$rows" "$sup" "$today"
+}
+
 # Anything at all to report? Blank lines and comments do not count, so a file
 # that is technically non-empty but says nothing still closes the issue.
-findings() { # <file>
-    [ -s "${1:?findings needs a file}" ] || return 1
-    grep -qvE '^\s*(#|$)' "$1"
+findings() { # <file> [<suppressions-file>] [<today>]
+    local rows="${1:?findings needs a file}"
+    [ -s "$rows" ] || return 1
+    # Suppressed rows still render; they just do not hold the issue open.
+    [ -n "$(classify active "$@")" ]
 }
 
 # Rows in, markdown out. Sections are omitted entirely when they have no rows:
 # an empty heading reads as a clean bill of health for something that was never
 # checked.
-render() { # <file>
-    local f="${1:?render needs a file}" n
+render() { # <file> [<suppressions-file>] [<today>]
+    : "${1:?render needs a file}"
+    # The rows file reaches classify through "$@", along with the optional
+    # suppressions path and date, so it is not referenced again by name here.
+    local n act blk
+    act="$(mktemp)"; blk="$(mktemp)"
+    classify active "$@" > "$act"
+    classify blocked "$@" > "$blk"
 
     printf '%s\n\n' "This issue is opened by \`digest.yml\` when something needs attention and closed when nothing does. It is not a status page."
     # A team cannot be an issue assignee on GitHub, so the team reaches its
@@ -65,42 +127,60 @@ render() { # <file>
     # workflow and must be a user.
     [ -z "${DIGEST_TEAM:-}" ] || printf '%s\n\n' "cc @${DIGEST_TEAM}"
 
-    n="$(awk -F'\t' '$1=="pr"' "$f" | wc -l)"
+    n="$(awk -F'\t' '$1=="pr"' "$act" | wc -l)"
     if [ "$n" -gt 0 ]; then
         printf '## Open Dependabot pull requests (%s)\n\n' "$n"
         printf '| repo | PR | checks | age | title |\n|---|---|---|---|---|\n'
         awk -F'\t' -v s="$STALE_DAYS" '$1=="pr" {
             age = ($5 >= s) ? $5 " days, stale" : $5 " days"
             printf "| %s | #%s | %s | %s | %s |\n", $2, $3, $4, age, $6
-        }' "$f"
+        }' "$act"
         printf '\n'
     fi
 
-    n="$(awk -F'\t' '$1=="audit"' "$f" | wc -l)"
+    n="$(awk -F'\t' '$1=="audit"' "$act" | wc -l)"
     if [ "$n" -gt 0 ]; then
         printf '## npm audit (%s)\n\n' "$n"
         printf 'One row per advisory, not per package in the chain.\n\n'
         printf '| repo | manifest | severity | package | advisory |\n|---|---|---|---|---|\n'
-        awk -F'\t' '$1=="audit" { printf "| %s | %s | %s | %s | %s |\n", $2, $3, $4, $5, $6 }' "$f"
+        awk -F'\t' '$1=="audit" { printf "| %s | %s | %s | %s | %s |\n", $2, $3, $4, $5, $6 }' "$act"
         printf '\n'
     fi
 
-    n="$(awk -F'\t' '$1=="alert"' "$f" | wc -l)"
+    n="$(awk -F'\t' '$1=="alert"' "$act" | wc -l)"
     if [ "$n" -gt 0 ]; then
         printf '## Dependabot alerts (%s)\n\n' "$n"
         printf '| repo | severity | package | advisory |\n|---|---|---|---|\n'
-        awk -F'\t' '$1=="alert" { printf "| %s | %s | %s | %s |\n", $2, $3, $4, $5 }' "$f"
+        awk -F'\t' '$1=="alert" { printf "| %s | %s | %s | %s |\n", $2, $3, $4, $5 }' "$act"
         printf '\n'
     fi
 
-    n="$(awk -F'\t' '$1=="cover"' "$f" | wc -l)"
+    n="$(awk -F'\t' '$1=="cover"' "$act" | wc -l)"
     if [ "$n" -gt 0 ]; then
         printf '## Security settings not enabled (%s)\n\n' "$n"
         printf 'None of these is inherited by a new repository.\n\n'
         printf '| repo | setting | state |\n|---|---|---|\n'
-        awk -F'\t' '$1=="cover" { printf "| %s | %s | %s |\n", $2, $3, $4 }' "$f"
+        awk -F'\t' '$1=="cover" { printf "| %s | %s | %s |\n", $2, $3, $4 }' "$act"
         printf '\n'
     fi
+
+    # Known and blocked: rendered so nothing is hidden, but not counted, so the
+    # issue can still close. The review date is what stops a suppression
+    # becoming permanent: past it the finding counts again and this reopens.
+    n="$(grep -c . "$blk" || true)"
+    if [ "$n" -gt 0 ]; then
+        printf '## Known and blocked (%s)\n\n' "$n"
+        printf 'Not counted as needing attention. Each stops being suppressed on its review date, at which point it returns to the sections above.\n\n'
+        printf '| repo | finding | review by | why |\n|---|---|---|---|\n'
+        awk -F'\t' '{
+            key = ($1=="audit") ? $6 : ($1=="alert") ? $5 : $3
+            n = NF
+            printf "| %s | %s %s | %s | %s |\n", $2, $1, key, $(n-1), $n
+        }' "$blk"
+        printf '\n'
+    fi
+
+    rm -f "$act" "$blk"
 }
 
 # npm audit JSON for one manifest into rows, ONE PER ADVISORY.

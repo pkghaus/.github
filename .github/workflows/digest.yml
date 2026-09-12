@@ -72,7 +72,7 @@ jobs:
           if ! scripts/digest.sh findings findings.tsv; then
               if [ -n "$existing" ]; then
                   gh issue close "$existing" --repo "$REPO" \
-                      --comment "Nothing to report this week. Reopened automatically if that changes."
+                      --comment "Nothing needs attention. A new issue opens if that changes; this one is not reopened."
                   echo "closed #$existing"
               else
                   echo "nothing to report, no issue open"

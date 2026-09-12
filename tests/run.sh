@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=27
+EXPECTED_ASSERTIONS=35
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -43,6 +43,56 @@ if findings "$f"; then no "a comment alone reports nothing"; else ok "a comment 
 
 f="$(t 'alert\tapt\tHIGH\tsharp\tGHSA-x\n')"
 if findings "$f"; then ok "one row reports something"; else no "one row reports something"; fi
+
+echo "== suppressions: known findings render but do not hold the issue open =="
+sup="$work/sup.tsv"
+cat > "$sup" <<'SUPEOF'
+# comment, ignored
+audit	plausible-worker	GHSA-x	2026-12-01	upstream has shipped nothing to move to
+SUPEOF
+
+f="$(t 'audit\tplausible-worker\t.\thigh\tsharp\tGHSA-x\n')"
+if findings "$f" "$sup" 2026-09-12; then
+    no "a suppressed finding does not hold the issue open"
+else
+    ok "a suppressed finding does not hold the issue open"
+fi
+case "$(render "$f" "$sup" 2026-09-12)" in
+    *"Known and blocked (1)"*) ok "a suppressed finding is still rendered, not hidden" ;;
+    *) no "a suppressed finding is still rendered, not hidden" ;; esac
+case "$(render "$f" "$sup" 2026-09-12)" in
+    *"upstream has shipped nothing"*) ok "the reason travels with it" ;;
+    *) no "the reason travels with it" ;; esac
+case "$(render "$f" "$sup" 2026-09-12)" in
+    *"npm audit"*) no "a suppressed row is not double counted in its own section" ;;
+    *) ok "a suppressed row is not double counted in its own section" ;; esac
+
+# The expiry is the whole point: past the date it counts again, so a
+# suppression cannot quietly become permanent.
+if findings "$f" "$sup" 2026-12-02; then
+    ok "an expired suppression counts again"
+else
+    no "an expired suppression counts again" "still suppressed after its review date"
+fi
+if findings "$f" "$sup" 2026-12-01; then
+    no "the review date itself is still suppressed"
+else
+    ok "the review date itself is still suppressed"
+fi
+# A suppression is per repo: another repo with the same advisory still counts.
+f="$(t 'audit\tstats\t.\thigh\tsharp\tGHSA-x\n')"
+if findings "$f" "$sup" 2026-09-12; then
+    ok "a suppression does not leak to another repo"
+else
+    no "a suppression does not leak to another repo"
+fi
+# And per advisory: a different one in the same repo still counts.
+f="$(t 'audit\tplausible-worker\t.\thigh\tsharp\tGHSA-other\n')"
+if findings "$f" "$sup" 2026-09-12; then
+    ok "a suppression does not leak to another advisory"
+else
+    no "a suppression does not leak to another advisory"
+fi
 
 echo "== render: a section with no rows is omitted, not shown empty =="
 f="$(t 'alert\tapt\tHIGH\tsharp\tGHSA-x\n')"

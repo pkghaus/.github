@@ -1,0 +1,19 @@
+# Findings that are known, understood and cannot be fixed here yet.
+#
+# A suppressed finding is NOT hidden. It still appears in the digest, in its own
+# section, with the reason and the date it must be looked at again. What it does
+# not do is hold the issue open: an issue that can never close stops being a
+# signal, which is the same disease as one that lists successes.
+#
+# The review date is the part that matters. A suppression with no expiry is a
+# silent pin, which is how this estate ended up carrying a lintian override that
+# had suppressed nothing for ten days. After the date passes the finding counts
+# again and the issue reopens, so the worst case is being asked a second time
+# rather than never being asked.
+#
+# Tab separated:  <kind>  <repo>  <key>  <review-by YYYY-MM-DD>  <reason>
+#
+# key is the advisory id for audit and alert rows, the setting name for cover
+# rows, and the pull request number for pr rows.
+
+audit	plausible-worker	GHSA-rgj7-g3m4-5g8c	2026-12-01	sharp reaches the tree through @cloudflare/vitest-pool-workers, whose newest release IS the pinned 0.22.0 (2026-08-18) and which depends on the miniflare carrying it. Dev-only, never in the Workers runtime. An npm override fixes it and was rejected: it would pin a transitive dependency past an exact pin for a dev-only finding, and need removing later. Drop this line when the pool ships a release with a fixed miniflare.
