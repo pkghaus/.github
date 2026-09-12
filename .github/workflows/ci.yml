@@ -1,0 +1,46 @@
+name: CI
+
+# The digest ships tests, so something has to run them. This repository had no
+# workflows at all before the digest landed, which is the state that lets a
+# suite rot quietly: it passes on the machine of whoever last touched it and
+# nowhere else.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: shellcheck
+        # Pinned by digest rather than taken from the runner image, which moves
+        # on its own schedule and whose info-level checks differ by version.
+        run: |
+          docker run --rm \
+            --volume "$PWD:/repo" \
+            --workdir /repo \
+            koalaman/shellcheck@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d \
+            -x scripts/*.sh tests/*.sh
+
+      - name: Test
+        run: tests/run.sh
+
+      - name: actionlint
+        # go-yaml inside it also rejects duplicate mapping keys, which GitHub's
+        # parser rejects but many local checks accept.
+        run: |
+          docker run --rm \
+            --volume "$PWD:/repo" \
+            --workdir /repo \
+            rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
+            -color

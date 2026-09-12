@@ -1,0 +1,92 @@
+name: Dependency digest
+
+# One weekly view of the org's dependency and security state. This account
+# cannot have GitHub's own: the organization Security Overview needs GitHub
+# Team and pkghaus is on free, so /orgs/pkghaus/security 404s. The org-level
+# APIs it would have been built from do answer on free, which is what this uses.
+#
+# The issue exists only when something needs attention and is closed when
+# nothing does, so an open issue always means work. Assigned on creation
+# because assignment notifies whatever a person's per-repo watch settings say,
+# where watching a repository for issues is a setting that can be changed or
+# reset without anyone noticing the digest stopped arriving.
+
+on:
+  schedule:
+    # Monday morning, before the week's work rather than after it.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # GITHUB_TOKEN is scoped to THIS repository, and every read here is about
+      # the others, so a token with org-wide read is required. Fine-grained,
+      # all repositories, read on Metadata, Contents, Pull requests, Dependabot
+      # alerts and Administration, plus write on Issues for the digest itself.
+      - name: Collect
+        env:
+          GH_TOKEN: ${{ secrets.DIGEST_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN}" ]; then
+              echo "::error title=DIGEST_TOKEN is not set::the digest reads other repositories, which GITHUB_TOKEN cannot do" >&2
+              exit 1
+          fi
+          scripts/digest.sh collect > findings.tsv
+          # Loud rather than quiet: a token that silently lost a scope returns
+          # empty for everything, which renders as a clean week.
+          echo "collected $(grep -c . findings.tsv || true) rows"
+
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ secrets.DIGEST_TOKEN }}
+          # A user. GitHub refuses a team as an assignee, so the team is
+          # mentioned in the body instead, which notifies its members.
+          ASSIGNEE: ${{ vars.DIGEST_ASSIGNEE }}
+          DIGEST_TEAM: ${{ vars.DIGEST_TEAM }}
+          REPO: ${{ github.repository }}
+          TITLE: Dependency digest
+        run: |
+          set -euo pipefail
+          existing="$(gh issue list --repo "$REPO" --state open --label dependency-digest \
+              --json number --jq '.[0].number // empty')"
+
+          if ! scripts/digest.sh findings findings.tsv; then
+              if [ -n "$existing" ]; then
+                  gh issue close "$existing" --repo "$REPO" \
+                      --comment "Nothing to report this week. Reopened automatically if that changes."
+                  echo "closed #$existing"
+              else
+                  echo "nothing to report, no issue open"
+              fi
+              exit 0
+          fi
+
+          scripts/digest.sh render findings.tsv > body.md
+          if [ -n "$existing" ]; then
+              gh issue edit "$existing" --repo "$REPO" --body-file body.md
+              echo "updated #$existing"
+          else
+              gh label create dependency-digest --repo "$REPO" \
+                  --description "Weekly dependency and security digest" --color FBCA04 2>/dev/null || true
+              gh issue create --repo "$REPO" --title "$TITLE" --body-file body.md \
+                  --label dependency-digest ${ASSIGNEE:+--assignee "$ASSIGNEE"}
+          fi
