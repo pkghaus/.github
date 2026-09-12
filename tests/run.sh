@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=41
+EXPECTED_ASSERTIONS=45
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -137,6 +137,26 @@ case "$body" in *"cc @"*) no "no team is mentioned when none is configured" ;;
 case "$(DIGEST_TEAM=pkghaus/maintainers render "$f")" in
     *"cc @pkghaus/maintainers"*) ok "a configured team is mentioned in the body" ;;
     *) no "a configured team is mentioned in the body" ;; esac
+
+echo "== render: an @ from outside is not a mention =="
+# Every scoped npm package starts with one, and @cloudflare is a real
+# organization: the first digest linked it mid-sentence from a table cell.
+f="$(t 'audit\tplausible-worker\t.\thigh\t@cloudflare/vitest-pool-workers\tGHSA-x\n')"
+case "$(render "$f")" in
+    *"&#64;cloudflare/vitest-pool-workers"*) ok "a scoped package name is escaped" ;;
+    *) no "a scoped package name is escaped" "$(render "$f" | grep cloudflare)" ;; esac
+case "$(render "$f")" in
+    *"| @cloudflare"*) no "no bare @ survives in a table cell" ;;
+    *) ok "no bare @ survives in a table cell" ;; esac
+f="$(t 'pr\tapt\t7\tpassing\t1\tbump @scope/thing\n')"
+case "$(render "$f")" in
+    *"&#64;scope/thing"*) ok "a pull request title is escaped too" ;;
+    *) no "a pull request title is escaped too" ;; esac
+# The cc line is a mention on purpose and must survive.
+f="$(t 'alert\tapt\tHIGH\tsharp\tGHSA-x\n')"
+case "$(DIGEST_TEAM=pkghaus/maintainers render "$f")" in
+    *"cc @pkghaus/maintainers"*) ok "the deliberate team mention is left alone" ;;
+    *) no "the deliberate team mention is left alone" ;; esac
 
 echo "== render: pull request age becomes stale wording at the threshold =="
 f="$(t 'pr\tapt\t7\tpassing\t2\tbump x\n')"

@@ -109,7 +109,15 @@ findings() { # <file> [<suppressions-file>] [<today>]
     [ -n "$(classify active "$@")" ]
 }
 
-# Rows in, markdown out. Sections are omitted entirely when they have no rows:
+# Rows in, markdown out.
+#
+# Every field that came from outside has its @ replaced with &#64;, which
+# renders identically and means nothing to GitHub's mention parser. A bare @name
+# in issue text is a link and a notification to whoever owns it, and every
+# scoped npm package begins with one: "@cloudflare/vitest-pool-workers" in a
+# table cell linked a real organization mid-sentence. Package names, pull
+# request titles and suppression reasons are all escaped. The cc line is not,
+# because that mention is the point. Sections are omitted entirely when they have no rows:
 # an empty heading reads as a clean bill of health for something that was never
 # checked.
 render() { # <file> [<suppressions-file>] [<today>]
@@ -149,7 +157,8 @@ PREAMBLE
         printf '| repo | PR | checks | age | title |\n|---|---|---|---|---|\n'
         awk -F'\t' -v s="$STALE_DAYS" '$1=="pr" {
             age = ($5 >= s) ? $5 " days, stale" : $5 " days"
-            printf "| %s | #%s | %s | %s | %s |\n", $2, $3, $4, age, $6
+            t = $6; gsub(/@/, "\\&#64;", t)
+            printf "| %s | #%s | %s | %s | %s |\n", $2, $3, $4, age, t
         }' "$act"
         printf '\n'
     fi
@@ -159,7 +168,8 @@ PREAMBLE
         printf '## npm audit (%s)\n\n' "$n"
         printf 'One row per advisory, not per package in the chain.\n\n'
         printf '| repo | manifest | severity | package | advisory |\n|---|---|---|---|---|\n'
-        awk -F'\t' '$1=="audit" { printf "| %s | %s | %s | %s | %s |\n", $2, $3, $4, $5, $6 }' "$act"
+        awk -F'\t' '$1=="audit" { p = $5; gsub(/@/, "\\&#64;", p)
+            printf "| %s | %s | %s | %s | %s |\n", $2, $3, $4, p, $6 }' "$act"
         printf '\n'
     fi
 
@@ -167,7 +177,8 @@ PREAMBLE
     if [ "$n" -gt 0 ]; then
         printf '## Dependabot alerts (%s)\n\n' "$n"
         printf '| repo | severity | package | advisory |\n|---|---|---|---|\n'
-        awk -F'\t' '$1=="alert" { printf "| %s | %s | %s | %s |\n", $2, $3, $4, $5 }' "$act"
+        awk -F'\t' '$1=="alert" { p = $4; gsub(/@/, "\\&#64;", p)
+            printf "| %s | %s | %s | %s |\n", $2, $3, p, $5 }' "$act"
         printf '\n'
     fi
 
@@ -195,7 +206,8 @@ PREAMBLE
         awk -F'\t' '{
             key = ($1=="audit") ? $6 : ($1=="alert") ? $5 : $3
             n = NF
-            printf "- **%s** %s `%s`, review by **%s**\n  %s\n", $2, $1, key, $(n-1), $n
+            why = $n; gsub(/@/, "\\&#64;", why)
+            printf "- **%s** %s `%s`, review by **%s**\n  %s\n", $2, $1, key, $(n-1), why
         }' "$blk"
         printf '\n'
     fi
