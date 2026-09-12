@@ -155,7 +155,10 @@ PREAMBLE
     n="$(awk -F'\t' '$1=="pr"' "$act" | wc -l)"
     if [ "$n" -gt 0 ]; then
         printf '## Open Dependabot pull requests (%s)\n\n' "$n"
-        printf '| repo | PR | checks | age | title |\n|---|---|---|---|---|\n'
+        # Every delimiter row is left-aligned (:---). GitHub's markdown CSS sets
+        # no text-align on th, so the browser default centres every header over
+        # a left-aligned column, and a narrow table then reads as misaligned.
+        printf '| repo | PR | checks | age | title |\n|:---|:---|:---|:---|:---|\n'
         awk -F'\t' -v s="$STALE_DAYS" '$1=="pr" {
             age = ($5 >= s) ? $5 " days, stale" : $5 " days"
             t = $6; gsub(/@/, "\\&#64;", t)
@@ -168,7 +171,7 @@ PREAMBLE
     if [ "$n" -gt 0 ]; then
         printf '## npm audit (%s)\n\n' "$n"
         printf 'One row per advisory, not per package in the chain.\n\n'
-        printf '| repo | manifest | severity | package | advisory |\n|---|---|---|---|---|\n'
+        printf '| repo | manifest | severity | package | advisory |\n|:---|:---|:---|:---|:---|\n'
         awk -F'\t' '$1=="audit" { p = $5; gsub(/@/, "\\&#64;", p)
             printf "| %s | %s | %s | %s | %s |\n", $2, $3, $4, p, $6 }' "$act"
         printf '\n'
@@ -177,7 +180,7 @@ PREAMBLE
     n="$(awk -F'\t' '$1=="alert"' "$act" | wc -l)"
     if [ "$n" -gt 0 ]; then
         printf '## Dependabot alerts (%s)\n\n' "$n"
-        printf '| repo | severity | package | advisory |\n|---|---|---|---|\n'
+        printf '| repo | severity | package | advisory |\n|:---|:---|:---|:---|\n'
         awk -F'\t' '$1=="alert" { p = $4; gsub(/@/, "\\&#64;", p)
             printf "| %s | %s | %s | %s |\n", $2, $3, p, $5 }' "$act"
         printf '\n'
@@ -187,7 +190,7 @@ PREAMBLE
     if [ "$n" -gt 0 ]; then
         printf '## Security settings not enabled (%s)\n\n' "$n"
         printf 'None of these is inherited by a new repository.\n\n'
-        printf '| repo | setting | state |\n|---|---|---|\n'
+        printf '| repo | setting | state |\n|:---|:---|:---|\n'
         awk -F'\t' '$1=="cover" { printf "| %s | %s | %s |\n", $2, $3, $4 }' "$act"
         printf '\n'
     fi
