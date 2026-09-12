@@ -63,18 +63,16 @@ case "$(render "$f" "$sup" 2026-09-12)" in
 case "$(render "$f" "$sup" 2026-09-12)" in
     *"upstream has shipped nothing"*) ok "the reason travels with it" ;;
     *) no "the reason travels with it" ;; esac
-# A list, not a table: the reason is free text of a few hundred characters, and
-# in a table cell it dominates the column widths until GitHub wraps the repo
-# name and the advisory id mid-token.
+# A table, matching the sections above. Its header is left-aligned like theirs;
+# the reason column crowding the others is inherent to a paragraph in a cell.
 case "$(render "$f" "$sup" 2026-09-12)" in
-    *"| repo | finding |"*) no "blocked findings avoid a table" "rendered as a table" ;;
-    *) ok "blocked findings avoid a table" ;; esac
-# shellcheck disable=SC2016  # the backticks are markdown, not a subshell
+    *"| repo | finding | review by | why |"*) ok "blocked findings render as a table" ;;
+    *) no "blocked findings render as a table" "no header row" ;; esac
 case "$(render "$f" "$sup" 2026-09-12)" in
-    *'- **plausible-worker** audit `GHSA-x`, review by **2026-12-01**'*)
-        ok "a blocked finding reads as one list item" ;;
-    *) no "a blocked finding reads as one list item" \
-          "$(render "$f" "$sup" 2026-09-12 | grep -A1 'Known and blocked' | tail -1)" ;; esac
+    *"| plausible-worker | audit GHSA-x | 2026-12-01 |"*)
+        ok "a blocked finding reads as one table row" ;;
+    *) no "a blocked finding reads as one table row" \
+          "$(render "$f" "$sup" 2026-09-12 | grep -A4 'Known and blocked' | tail -1)" ;; esac
 case "$(render "$f" "$sup" 2026-09-12)" in
     *"## npm audit"*) no "a suppressed row is not double counted in its own section" ;;
     *) ok "a suppressed row is not double counted in its own section" ;; esac
@@ -143,7 +141,7 @@ eq "no preamble paragraph is hand-wrapped" 0 "$wrapped"
 centred="$(grep -c -- '|---' "$ROOT/scripts/digest.sh" || true)"
 eq "no table header is left at GitHub's centred default" 0 "$centred"
 aligned="$(grep -c -- '|:---' "$ROOT/scripts/digest.sh" || true)"
-eq "all four tables declare their alignment" 4 "$aligned"
+eq "all five tables declare their alignment" 5 "$aligned"
 # A body rewritten in place looks equally fresh whenever you read it.
 case "$(DIGEST_RUN_AT='2026-01-02 03:04:05 UTC' render "$f")" in
     *"Last run 2026-01-02 03:04:05 UTC"*) ok "the body stamps which run wrote it" ;;
