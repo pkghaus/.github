@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=39
+EXPECTED_ASSERTIONS=41
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -63,6 +63,18 @@ case "$(render "$f" "$sup" 2026-09-12)" in
 case "$(render "$f" "$sup" 2026-09-12)" in
     *"upstream has shipped nothing"*) ok "the reason travels with it" ;;
     *) no "the reason travels with it" ;; esac
+# A list, not a table: the reason is free text of a few hundred characters, and
+# in a table cell it dominates the column widths until GitHub wraps the repo
+# name and the advisory id mid-token.
+case "$(render "$f" "$sup" 2026-09-12)" in
+    *"| repo | finding |"*) no "blocked findings avoid a table" "rendered as a table" ;;
+    *) ok "blocked findings avoid a table" ;; esac
+# shellcheck disable=SC2016  # the backticks are markdown, not a subshell
+case "$(render "$f" "$sup" 2026-09-12)" in
+    *'- **plausible-worker** audit `GHSA-x`, review by **2026-12-01**'*)
+        ok "a blocked finding reads as one list item" ;;
+    *) no "a blocked finding reads as one list item" \
+          "$(render "$f" "$sup" 2026-09-12 | grep -A1 'Known and blocked' | tail -1)" ;; esac
 case "$(render "$f" "$sup" 2026-09-12)" in
     *"## npm audit"*) no "a suppressed row is not double counted in its own section" ;;
     *) ok "a suppressed row is not double counted in its own section" ;; esac
