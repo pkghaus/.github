@@ -202,16 +202,22 @@ PREAMBLE
     if [ "$n" -gt 0 ]; then
         printf '## Known and blocked (%s)\n\n' "$n"
         printf 'Not counted as needing attention. Each stops being suppressed on its review date, at which point it returns to the sections above.\n\n'
-        # A list, NOT a table. The reason is free text and runs to a few
-        # hundred characters; in a table cell it dominates the column widths
-        # and GitHub squeezes every other column until the repository name and
-        # the advisory id wrap mid-token. The short-celled sections above stay
-        # tables because they render fine as one.
+        # A table, by preference, and the reason column does crowd the others:
+        # GitHub sizes columns by content, so a few hundred characters of free
+        # text takes most of the width and the narrow columns then wrap at
+        # every break opportunity they have - the hyphens in a repo name and in
+        # an advisory id. Nothing available fixes that without a worse cost.
+        # Measured against GitHub's own /markdown endpoint: <nobr> is dropped by
+        # the sanitizer, style on a <span> is stripped, and a non-breaking
+        # hyphen renders correctly but yields U+2011 when someone copies an
+        # advisory id to paste into a search. The header alignment below is the
+        # part that IS fixable, and it is fixed.
+        printf '| repo | finding | review by | why |\n|:---|:---|:---|:---|\n'
         awk -F'\t' '{
             key = ($1=="audit") ? $6 : ($1=="alert") ? $5 : $3
             n = NF
             why = $n; gsub(/@/, "\\&#64;", why)
-            printf "- **%s** %s `%s`, review by **%s**\n  %s\n", $2, $1, key, $(n-1), why
+            printf "| %s | %s %s | %s | %s |\n", $2, $1, key, $(n-1), why
         }' "$blk"
         printf '\n'
     fi
