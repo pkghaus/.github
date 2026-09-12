@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=46
+EXPECTED_ASSERTIONS=48
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -135,6 +135,15 @@ wrapped="$(printf '%s\n' "$body" | sed -n '1,/^## /p' | awk '
     { prev = NF ? $0 : "" }
     END { print n+0 }')"
 eq "no preamble paragraph is hand-wrapped" 0 "$wrapped"
+
+# Every table delimiter row left-aligns. GitHub sets no text-align on th, so the
+# browser default centres each header over its left-aligned column. Asserted
+# against the SCRIPT, not one rendered body: no single fixture reaches all four
+# tables, and a table this fixture misses is exactly the one that ships wrong.
+centred="$(grep -c -- '|---' "$ROOT/scripts/digest.sh" || true)"
+eq "no table header is left at GitHub's centred default" 0 "$centred"
+aligned="$(grep -c -- '|:---' "$ROOT/scripts/digest.sh" || true)"
+eq "all four tables declare their alignment" 4 "$aligned"
 # A body rewritten in place looks equally fresh whenever you read it.
 case "$(DIGEST_RUN_AT='2026-01-02 03:04:05 UTC' render "$f")" in
     *"Last run 2026-01-02 03:04:05 UTC"*) ok "the body stamps which run wrote it" ;;
