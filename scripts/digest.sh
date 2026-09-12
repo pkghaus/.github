@@ -33,7 +33,7 @@
 # TSV schema, one finding per row, tab separated:
 #   pr     <repo> <number> <checks> <age-days> <title>
 #   alert  <repo> <severity> <package> <ghsa>
-#   audit  <repo> <manifest-dir> <severity> <package>
+#   audit  <repo> <manifest-dir> <severity> <package> <advisory>
 #   cover  <repo> <setting> <state>
 
 set -euo pipefail
@@ -79,9 +79,9 @@ render() { # <file>
     n="$(awk -F'\t' '$1=="audit"' "$f" | wc -l)"
     if [ "$n" -gt 0 ]; then
         printf '## npm audit (%s)\n\n' "$n"
-        printf 'What the alerts API does not report. Run against each committed lockfile.\n\n'
-        printf '| repo | manifest | severity | package |\n|---|---|---|---|\n'
-        awk -F'\t' '$1=="audit" { printf "| %s | %s | %s | %s |\n", $2, $3, $4, $5 }' "$f"
+        printf 'One row per advisory, not per package in the chain.\n\n'
+        printf '| repo | manifest | severity | package | advisory |\n|---|---|---|---|---|\n'
+        awk -F'\t' '$1=="audit" { printf "| %s | %s | %s | %s | %s |\n", $2, $3, $4, $5, $6 }' "$f"
         printf '\n'
     fi
 
@@ -103,8 +103,18 @@ render() { # <file>
     fi
 }
 
-# npm audit JSON for one manifest into rows. Severity and package only: the
-# version ranges belong in the repo, not in a digest nobody can act on from.
+# npm audit JSON for one manifest into rows, ONE PER ADVISORY.
+#
+# npm reports every package in the chain, so a single advisory on a leaf
+# becomes a row for the leaf and a row for each dependent. Measured on apt's
+# lockfile: three rows, one advisory. Counting those rows as separate findings
+# inflated an estate-wide figure roughly threefold before anyone asked what it
+# counted, so this deliberately does not.
+#
+# The carrier is the package whose `via` holds the advisory OBJECT; a
+# dependent's `via` holds only the name of what it pulls in. Filtering on that
+# leaves exactly the packages actually carrying a vulnerability. One package
+# with two advisories is still two findings, which is why the key is the pair.
 audit_rows() { # <repo> <manifest-dir>   (JSON on stdin)
     local repo="${1:?}" dir="${2:?}"
     # shellcheck disable=SC2016  # python source, the shell must expand nothing
@@ -113,8 +123,16 @@ import json,sys
 repo, d = sys.argv[1], sys.argv[2]
 try: a = json.load(sys.stdin)
 except Exception: sys.exit(0)
+seen = set()
 for name, v in sorted(a.get("vulnerabilities", {}).items()):
-    print("\t".join(("audit", repo, d, v.get("severity","?"), name)))
+    for src in v.get("via", []):
+        if not isinstance(src, dict):
+            continue
+        ident = (src.get("url") or "").rsplit("/", 1)[-1] or str(src.get("source") or "?")
+        if (name, ident) in seen:
+            continue
+        seen.add((name, ident))
+        print("\t".join(("audit", repo, d, v.get("severity","?"), name, ident)))
 ' "$repo" "$dir"
 }
 

@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=24
+EXPECTED_ASSERTIONS=27
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -78,13 +78,32 @@ f="$(t 'pr\tapt\t7\tpassing\t1\tbump a\\|b\n')"
 case "$(render "$f")" in *'a\|b'*) ok "a pipe in a title stays escaped" ;;
                          *) no "a pipe in a title stays escaped" "$(render "$f")" ;; esac
 
-echo "== audit_rows: npm audit json to rows =="
-out="$(printf '%s' '{"vulnerabilities":{"sharp":{"severity":"high"},"nanoid":{"severity":"moderate"}}}' \
-    | audit_rows apt worker)"
-eq "one row per vulnerability" 2 "$(printf '%s\n' "$out" | grep -c .)"
-case "$out" in *$'audit\tapt\tworker\thigh\tsharp'*) ok "rows carry repo, manifest, severity, package" ;;
-                *) no "rows carry repo, manifest, severity, package" "$out" ;; esac
+echo "== audit_rows: one row per ADVISORY, not per package in the chain =="
+# The real shape npm emits: the carrier's via holds the advisory object, every
+# dependent's via holds only a name. Measured on apt's lockfile, 3 rows came
+# from 1 advisory, and counting the rows inflated an estate figure threefold.
+chain='{"vulnerabilities":{
+  "sharp":{"severity":"high","via":[{"url":"https://github.com/advisories/GHSA-rgj7-g3m4-5g8c"}]},
+  "miniflare":{"severity":"high","via":["sharp"]},
+  "wrangler":{"severity":"high","via":["miniflare"]}}}'
+out="$(printf '%s' "$chain" | audit_rows apt worker)"
+eq "a three-package chain is one row" 1 "$(printf '%s\n' "$out" | grep -c .)"
+eq "the row names the carrier, not a dependent" "sharp" "$(printf '%s' "$out" | cut -f5)"
+eq "the row carries the advisory id" "GHSA-rgj7-g3m4-5g8c" "$(printf '%s' "$out" | cut -f6)"
+
+two='{"vulnerabilities":{
+  "sharp":{"severity":"high","via":[{"url":"https://github.com/advisories/GHSA-aaaa"}]},
+  "nanoid":{"severity":"moderate","via":[{"url":"https://github.com/advisories/GHSA-bbbb"}]}}}'
+out="$(printf '%s' "$two" | audit_rows apt worker)"
+eq "two real advisories are two rows" 2 "$(printf '%s\n' "$out" | grep -c .)"
 eq "rows are sorted by package" "nanoid" "$(printf '%s\n' "$out" | head -1 | cut -f5)"
+
+# One package can carry two advisories, and that is genuinely two findings.
+dbl='{"vulnerabilities":{"sharp":{"severity":"high","via":[
+  {"url":"https://github.com/advisories/GHSA-aaaa"},{"url":"https://github.com/advisories/GHSA-bbbb"}]}}}'
+eq "one package with two advisories is two rows" 2 \
+   "$(printf '%s' "$dbl" | audit_rows apt worker | grep -c .)"
+
 out="$(printf '%s' '{"vulnerabilities":{}}' | audit_rows apt worker)"
 eq "a clean audit yields no rows" "" "$out"
 # npm has emitted non-JSON on failure before; a crash here would take the whole
