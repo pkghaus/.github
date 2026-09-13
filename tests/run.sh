@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=48
+EXPECTED_ASSERTIONS=54
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -63,6 +63,42 @@ case "$(render "$f" "$sup" 2026-09-12)" in
 case "$(render "$f" "$sup" 2026-09-12)" in
     *"upstream has shipped nothing"*) ok "the reason travels with it" ;;
     *) no "the reason travels with it" ;; esac
+# A failed Dependabot UPDATE JOB is its own finding. It opens no pull request
+# and changes no alert, so every other section reads clean while the updater is
+# broken - which is the whole reason this section exists.
+#
+# Distinct files, not t(): that helper reuses one path, so a second call would
+# clobber the fixture the assertions below still refer to.
+u="$work/updater.tsv"
+printf 'updater\tplausible-worker\tnpm_and_yarn in /. for sharp\t2026-09-11\n' > "$u"
+usup="$work/updater-sup.tsv"
+printf 'updater\tplausible-worker\tnpm_and_yarn in /. for sharp\t2099-01-01\tblocked upstream\n' > "$usup"
+nofail="$work/no-updater.tsv"
+printf 'alert\tapt\tHIGH\tsharp\tGHSA-x\n' > "$nofail"
+
+case "$(render "$u")" in
+    *"## Dependabot updater failing (1)"*) ok "a failed updater gets its own section" ;;
+    *) no "a failed updater gets its own section" ;; esac
+case "$(render "$u")" in
+    *"| plausible-worker | npm_and_yarn in /. for sharp | 2026-09-11 |"*)
+        ok "the failing job and the date both render" ;;
+    *) no "the failing job and the date both render" \
+          "$(render "$u" | grep '^| plausible' || echo 'no row')" ;; esac
+if findings "$u"; then ok "a failed updater holds the issue open"
+else no "a failed updater holds the issue open"; fi
+# The section is omitted when nothing failed: an empty heading reads as a clean
+# bill of health for something that was never checked.
+case "$(render "$nofail")" in
+    *"Dependabot updater"*) no "no updater section when none failed" ;;
+    *) ok "no updater section when none failed" ;; esac
+# And it suppresses on the job name, like every other kind.
+case "$(render "$u" "$usup" 2026-09-13)" in
+    *"## Dependabot updater failing"*) no "a suppressed updater leaves the active section" ;;
+    *) ok "a suppressed updater leaves the active section" ;; esac
+case "$(render "$u" "$usup" 2026-09-13)" in
+    *"Known and blocked (1)"*) ok "a suppressed updater lands in blocked" ;;
+    *) no "a suppressed updater lands in blocked" ;; esac
+
 # A table, matching the sections above. Its header is left-aligned like theirs;
 # the reason column crowding the others is inherent to a paragraph in a cell.
 case "$(render "$f" "$sup" 2026-09-12)" in
@@ -141,7 +177,7 @@ eq "no preamble paragraph is hand-wrapped" 0 "$wrapped"
 centred="$(grep -c -- '|---' "$ROOT/scripts/digest.sh" || true)"
 eq "no table header is left at GitHub's centred default" 0 "$centred"
 aligned="$(grep -c -- '|:---' "$ROOT/scripts/digest.sh" || true)"
-eq "all five tables declare their alignment" 5 "$aligned"
+eq "all six tables declare their alignment" 6 "$aligned"
 # A body rewritten in place looks equally fresh whenever you read it.
 case "$(DIGEST_RUN_AT='2026-01-02 03:04:05 UTC' render "$f")" in
     *"Last run 2026-01-02 03:04:05 UTC"*) ok "the body stamps which run wrote it" ;;
