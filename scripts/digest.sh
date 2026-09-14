@@ -15,7 +15,7 @@
 #
 # It reports three things and the third is the one experience argues for.
 # Dependabot pull requests and their checks are the obvious half. `npm audit` is
-# here because GitHub's alerts under-report: measured 2026-09-12, the alerts API
+# here because GitHub's alerts under-report: when this was built the alerts API
 # said 2 findings across this org while npm audit found 16, and three repos that
 # read as clean were not. A digest that only mirrors GitHub inherits GitHub's
 # blind spot and reassures you weekly. Per-repo security settings are here
@@ -68,7 +68,7 @@ classify() { # <mode> <rows-file> [<suppressions-file>] [<today>]
     python3 -c '
 import sys
 mode, rows, sup, today = sys.argv[1:5]
-KEY = {"audit": 5, "alert": 4, "cover": 2, "pr": 2}   # zero-based field index
+KEY = {"audit": 5, "alert": 4, "cover": 2, "pr": 2, "updater": 2}   # zero-based field index
 
 rules = {}
 try:
@@ -183,6 +183,16 @@ PREAMBLE
         printf '| repo | severity | package | advisory |\n|:---|:---|:---|:---|\n'
         awk -F'\t' '$1=="alert" { p = $4; gsub(/@/, "\\&#64;", p)
             printf "| %s | %s | %s | %s |\n", $2, $3, p, $5 }' "$act"
+        printf '\n'
+    fi
+
+    n="$(awk -F'\t' '$1=="updater"' "$act" | wc -l)"
+    if [ "$n" -gt 0 ]; then
+        printf '## Dependabot updater failing (%s)\n\n' "$n"
+        printf 'The update job itself errored, so it opened no pull request and changed no alert. A repository whose updater is broken otherwise looks exactly like one with nothing to do.\n\n'
+        printf '| repo | update job | failing since |\n|:---|:---|:---|\n'
+        awk -F'\t' '$1=="updater" { j = $3; gsub(/@/, "\\&#64;", j)
+            printf "| %s | %s | %s |\n", $2, j, $4 }' "$act"
         printf '\n'
     fi
 
@@ -340,6 +350,37 @@ collect_alerts() {
                      .dependency.package.name, .security_advisory.ghsa_id] | @tsv' 2>/dev/null || true
 }
 
+# The managed Dependabot workflow - the one no repository holds a file for. Its
+# runs carry the path below, and one name per update job with a per-run suffix:
+# "npm_and_yarn in /. for sharp - Update #1570714909".
+#
+# Two things this must not do, both measured rather than reasoned about.
+#
+# It must not read /actions/runs and filter: a busy repository crowds the
+# Dependabot runs out of the newest 100. Measured when this was written, apt
+# showed 2 there and packages showed 0. Asking the workflow for its own runs
+# cannot be crowded out.
+#
+# And it must not read only the newest run. Each manifest and each security
+# advisory is a separate job, so a version update running after a failed
+# security update would hide it - which is exactly the case this was written
+# for: plausible-worker's sharp job was failing while both of its
+# version-update jobs were green. The question is the newest run PER JOB.
+collect_updater() { # <repo>
+    local repo="$1" wf
+    wf="$(gh api "repos/$ORG/$repo/actions/workflows" \
+          --jq '.workflows[] | select(.path=="dynamic/dependabot/dependabot-updates") | .id' \
+          2>/dev/null)" || return 0
+    [ -n "$wf" ] || return 0
+    gh api "repos/$ORG/$repo/actions/workflows/$wf/runs?per_page=100" 2>/dev/null \
+    | jq -r --arg repo "$repo" '
+        [.workflow_runs[] | {job: (.name | sub(" - Update #[0-9]+$"; "")),
+                             c: .conclusion, d: .created_at}]
+        | group_by(.job) | map(max_by(.d))
+        | .[] | select(.c == "failure")
+        | ["updater", $repo, (.job | gsub("\t"; " ")), .d[0:10]] | @tsv' 2>/dev/null || true
+}
+
 # Every committed lockfile, audited. Fetched rather than cloned: two files per
 # manifest against a full checkout of every repository.
 collect_audit() { # <repo>
@@ -379,6 +420,7 @@ collect() {
     while IFS=$'\t' read -r repo vis; do
         [ -n "$repo" ] || continue
         collect_prs "$repo"
+        collect_updater "$repo"
         collect_audit "$repo"
         collect_coverage "$repo" "$vis"
     done < <(repos)
