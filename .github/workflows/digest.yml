@@ -48,9 +48,20 @@ jobs:
           node-version: '22'
 
       # GITHUB_TOKEN is scoped to THIS repository, and every read here is about
-      # the others, so a token with org-wide read is required. Fine-grained,
-      # all repositories, read on Metadata, Contents, Pull requests, Dependabot
-      # alerts and Administration, plus write on Issues for the digest itself.
+      # the others, so a token with org-wide read is required. Fine-grained, all
+      # repositories, READ ONLY: Metadata, Contents, Pull requests, Actions,
+      # Dependabot alerts, Administration.
+      #
+      # NOT Issues. The digest's own issue is written by the step below under
+      # GITHUB_TOKEN, deliberately, so that it is authored by the app rather
+      # than by the token's creator. A write scope here would grant org-wide
+      # issue write to a secret that only ever reads.
+      #
+      # Actions is the one to watch. collect_updater reads each repo's
+      # dependabot-updates runs, and without that scope it returns nothing --
+      # which renders identically to "no updater run failed", because the
+      # section is omitted when the count is zero. A missing scope is therefore
+      # invisible in the output, unlike the others.
       - name: Collect
         env:
           GH_TOKEN: ${{ secrets.DIGEST_TOKEN }}
