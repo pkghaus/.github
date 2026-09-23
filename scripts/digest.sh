@@ -35,6 +35,7 @@
 #   alert  <repo> <severity> <package> <ghsa>
 #   audit  <repo> <manifest-dir> <severity> <package> <advisory>
 #   cover  <repo> <setting> <state>
+#   updater <repo> <job> <failing-since>
 
 set -euo pipefail
 shopt -s inherit_errexit
@@ -66,9 +67,39 @@ classify() { # <mode> <rows-file> [<suppressions-file>] [<today>]
     local today="${4:-$(date -u +%F)}"
     # shellcheck disable=SC2016  # python source, the shell must expand nothing
     python3 -c '
-import sys
+import re, sys
 mode, rows, sup, today = sys.argv[1:5]
 KEY = {"audit": 5, "alert": 4, "cover": 2, "pr": 2, "updater": 2}   # zero-based field index
+
+# A security-update job is named for the package it fixes ("npm_and_yarn in /.
+# for sharp") and runs only while that package has an open finding. Once the
+# finding is gone the job never runs again, so its last run stays its latest
+# for as long as it is in the 100-run window. A failure there would hold this
+# issue open over a vulnerability already fixed another way until it scrolled
+# out: on plausible-worker, about four months at its update cadence, for a run
+# that failed on 2026-09-11 and outlived the sharp advisory it was for. So such
+# a failure counts only while this repo still carries a finding
+# for that package, alert or audit, suppressed or not. A version-update job
+# ("npm_and_yarn in /.") runs on a schedule whatever the findings, so its
+# failure always counts. A name that does not parse as a single package is
+# kept: a grouped update names a group, and a job this cannot read is reported
+# rather than guessed away.
+SECURITY_JOB = re.compile(r"^\S+ in \S+ for ([^\s,]+)$")
+
+lines = []
+for line in open(rows):
+    line = line.rstrip("\n")
+    if not line.strip() or line.lstrip().startswith("#"):
+        continue
+    lines.append(line)
+
+carried = set()
+for line in lines:
+    f = line.split("\t")
+    if f[0] == "alert" and len(f) > 3:
+        carried.add((f[1], f[3]))
+    elif f[0] == "audit" and len(f) > 4:
+        carried.add((f[1], f[4]))
 
 rules = {}
 try:
@@ -83,11 +114,12 @@ try:
 except FileNotFoundError:
     pass
 
-for line in open(rows):
-    line = line.rstrip("\n")
-    if not line.strip() or line.lstrip().startswith("#"):
-        continue
+for line in lines:
     f = line.split("\t")
+    if f[0] == "updater" and len(f) > 2:
+        m = SECURITY_JOB.match(f[2])
+        if m and (f[1], m.group(1)) not in carried:
+            continue   # settled: nothing left for this job to fix
     idx = KEY.get(f[0])
     rule = rules.get((f[0], f[1], f[len(f) > idx and idx or 0])) if idx is not None and len(f) > idx else None
     # An expired suppression is no suppression. Past the date the finding counts
