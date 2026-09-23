@@ -230,8 +230,8 @@ PREAMBLE
 
     n="$(awk -F'\t' '$1=="cover"' "$act" | wc -l)"
     if [ "$n" -gt 0 ]; then
-        printf '## Security settings not enabled (%s)\n\n' "$n"
-        printf 'None of these is inherited by a new repository.\n\n'
+        printf '## Security settings not enabled or not readable (%s)\n\n' "$n"
+        printf '%s\n\n' "None of these is inherited by a new repository. **not readable** means \`DIGEST_TOKEN\` has no admin access to that repository, which is true of any public repository created or recreated after the token until it is added to the token's repository selection."
         printf '| repo | setting | state |\n|:---|:---|:---|\n'
         awk -F'\t' '$1=="cover" { printf "| %s | %s | %s |\n", $2, $3, $4 }' "$act"
         printf '\n'
@@ -329,12 +329,22 @@ data = sys.stdin.read()
 if vis.upper() != "PUBLIC":
     sys.exit(0)
 r = json.loads(data)
-sa = r.get("security_and_analysis") or {}
+# GitHub returns this block only to a caller with admin access to the repo.
+# Absent, it is not a statement that scanning is off: DIGEST_TOKEN simply
+# cannot see it, which is the case for any public repo created or recreated
+# after the token, since a fine-grained token selects repositories by id. Read
+# as settings, it renders two "unset" rows that send you to check a switch
+# that is already on - reproducible on 2026-09-21. So say what is true.
+if "security_and_analysis" not in r:
+    print("\t".join(("cover", repo, "security settings", "not readable")))
+    sa = None
+else:
+    sa = r.get("security_and_analysis") or {}
 def state(key):
     return ((sa.get(key) or {}).get("status")) or "unset"
 for key, label in (("secret_scanning","secret scanning"),
                    ("secret_scanning_push_protection","push protection")):
-    if state(key) != "enabled":
+    if sa is not None and state(key) != "enabled":
         print("\t".join(("cover", repo, label, state(key))))
 if rulesets.isdigit() and int(rulesets) == 0:
     print("\t".join(("cover", repo, "ruleset", "none")))

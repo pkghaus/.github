@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=62
+EXPECTED_ASSERTIONS=65
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -317,6 +317,21 @@ case "$(printf '%s' "$on" | coverage_rows apt PUBLIC 0)" in
 off='{"security_and_analysis":{"secret_scanning":{"status":"disabled"}}}'
 out="$(printf '%s' "$off" | coverage_rows new PUBLIC 1)"
 eq "both scanning settings are reported when off or unset" 2 "$(printf '%s\n' "$out" | grep -c .)"
+
+# GitHub returns security_and_analysis only to a caller with admin access, so a
+# repo the token cannot see has no block at all. That is not two settings off:
+# it rendered as "unset" twice for reproducible, whose settings were on.
+out="$(printf '%s' '{"name":"x"}' | coverage_rows reproducible PUBLIC 1)"
+eq "a repo the token cannot see is one not-readable row" \
+   "$(printf 'cover\treproducible\tsecurity settings\tnot readable')" "$out"
+case "$out" in
+    *unset*) no "and it is never reported as unset" "$out" ;;
+    *) ok "and it is never reported as unset" ;; esac
+f="$(t 'cover\treproducible\tsecurity settings\tnot readable\n')"
+case "$(render "$f")" in
+    *"## Security settings not enabled or not readable (1)"*"**not readable** means"*"| reproducible | security settings | not readable |"*)
+        ok "the section names both cases and explains not readable" ;;
+    *) no "the section names both cases and explains not readable" ;; esac
 
 # On this plan a private repository is refused rulesets outright and secret
 # scanning needs paid Advanced Security, so every check here would fire on wiki
