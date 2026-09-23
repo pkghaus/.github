@@ -35,6 +35,7 @@
 #   alert  <repo> <severity> <package> <ghsa>
 #   audit  <repo> <manifest-dir> <severity> <package> <advisory>
 #   cover  <repo> <setting> <state>
+#   updater <repo> <job> <failing-since>
 
 set -euo pipefail
 shopt -s inherit_errexit
@@ -66,9 +67,39 @@ classify() { # <mode> <rows-file> [<suppressions-file>] [<today>]
     local today="${4:-$(date -u +%F)}"
     # shellcheck disable=SC2016  # python source, the shell must expand nothing
     python3 -c '
-import sys
+import re, sys
 mode, rows, sup, today = sys.argv[1:5]
 KEY = {"audit": 5, "alert": 4, "cover": 2, "pr": 2, "updater": 2}   # zero-based field index
+
+# A security-update job is named for the package it fixes ("npm_and_yarn in /.
+# for sharp") and runs only while that package has an open finding. Once the
+# finding is gone the job never runs again, so its last run stays its latest
+# for as long as it is in the 100-run window. A failure there would hold this
+# issue open over a vulnerability already fixed another way until it scrolled
+# out: on plausible-worker, about four months at its update cadence, for a run
+# that failed on 2026-09-11 and outlived the sharp advisory it was for. So such
+# a failure counts only while this repo still carries a finding
+# for that package, alert or audit, suppressed or not. A version-update job
+# ("npm_and_yarn in /.") runs on a schedule whatever the findings, so its
+# failure always counts. A name that does not parse as a single package is
+# kept: a grouped update names a group, and a job this cannot read is reported
+# rather than guessed away.
+SECURITY_JOB = re.compile(r"^\S+ in \S+ for ([^\s,]+)$")
+
+lines = []
+for line in open(rows):
+    line = line.rstrip("\n")
+    if not line.strip() or line.lstrip().startswith("#"):
+        continue
+    lines.append(line)
+
+carried = set()
+for line in lines:
+    f = line.split("\t")
+    if f[0] == "alert" and len(f) > 3:
+        carried.add((f[1], f[3]))
+    elif f[0] == "audit" and len(f) > 4:
+        carried.add((f[1], f[4]))
 
 rules = {}
 try:
@@ -83,11 +114,12 @@ try:
 except FileNotFoundError:
     pass
 
-for line in open(rows):
-    line = line.rstrip("\n")
-    if not line.strip() or line.lstrip().startswith("#"):
-        continue
+for line in lines:
     f = line.split("\t")
+    if f[0] == "updater" and len(f) > 2:
+        m = SECURITY_JOB.match(f[2])
+        if m and (f[1], m.group(1)) not in carried:
+            continue   # settled: nothing left for this job to fix
     idx = KEY.get(f[0])
     rule = rules.get((f[0], f[1], f[len(f) > idx and idx or 0])) if idx is not None and len(f) > idx else None
     # An expired suppression is no suppression. Past the date the finding counts
@@ -198,8 +230,8 @@ PREAMBLE
 
     n="$(awk -F'\t' '$1=="cover"' "$act" | wc -l)"
     if [ "$n" -gt 0 ]; then
-        printf '## Security settings not enabled (%s)\n\n' "$n"
-        printf 'None of these is inherited by a new repository.\n\n'
+        printf '## Security settings not enabled or not readable (%s)\n\n' "$n"
+        printf '%s\n\n' "None of these is inherited by a new repository. **not readable** means \`DIGEST_TOKEN\` has no admin access to that repository, which is true of any public repository created or recreated after the token until it is added to the token's repository selection."
         printf '| repo | setting | state |\n|:---|:---|:---|\n'
         awk -F'\t' '$1=="cover" { printf "| %s | %s | %s |\n", $2, $3, $4 }' "$act"
         printf '\n'
@@ -297,12 +329,22 @@ data = sys.stdin.read()
 if vis.upper() != "PUBLIC":
     sys.exit(0)
 r = json.loads(data)
-sa = r.get("security_and_analysis") or {}
+# GitHub returns this block only to a caller with admin access to the repo.
+# Absent, it is not a statement that scanning is off: DIGEST_TOKEN simply
+# cannot see it, which is the case for any public repo created or recreated
+# after the token, since a fine-grained token selects repositories by id. Read
+# as settings, it renders two "unset" rows that send you to check a switch
+# that is already on - reproducible on 2026-09-21. So say what is true.
+if "security_and_analysis" not in r:
+    print("\t".join(("cover", repo, "security settings", "not readable")))
+    sa = None
+else:
+    sa = r.get("security_and_analysis") or {}
 def state(key):
     return ((sa.get(key) or {}).get("status")) or "unset"
 for key, label in (("secret_scanning","secret scanning"),
                    ("secret_scanning_push_protection","push protection")):
-    if state(key) != "enabled":
+    if sa is not None and state(key) != "enabled":
         print("\t".join(("cover", repo, label, state(key))))
 if rulesets.isdigit() and int(rulesets) == 0:
     print("\t".join(("cover", repo, "ruleset", "none")))

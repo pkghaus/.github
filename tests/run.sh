@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=54
+EXPECTED_ASSERTIONS=65
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -69,10 +69,15 @@ case "$(render "$f" "$sup" 2026-09-12)" in
 #
 # Distinct files, not t(): that helper reuses one path, so a second call would
 # clobber the fixture the assertions below still refer to.
+#
+# A VERSION-update job here, deliberately. It runs on a schedule whatever the
+# findings, so its failure always counts. A security-update job ("... for
+# sharp") counts only while its package still has a finding, which the next
+# group tests; used here with no finding beside it, it would be settled.
 u="$work/updater.tsv"
-printf 'updater\tplausible-worker\tnpm_and_yarn in /. for sharp\t2026-09-11\n' > "$u"
+printf 'updater\tplausible-worker\tnpm_and_yarn in /.\t2026-09-11\n' > "$u"
 usup="$work/updater-sup.tsv"
-printf 'updater\tplausible-worker\tnpm_and_yarn in /. for sharp\t2099-01-01\tblocked upstream\n' > "$usup"
+printf 'updater\tplausible-worker\tnpm_and_yarn in /.\t2099-01-01\tblocked upstream\n' > "$usup"
 nofail="$work/no-updater.tsv"
 printf 'alert\tapt\tHIGH\tsharp\tGHSA-x\n' > "$nofail"
 
@@ -80,7 +85,7 @@ case "$(render "$u")" in
     *"## Dependabot updater failing (1)"*) ok "a failed updater gets its own section" ;;
     *) no "a failed updater gets its own section" ;; esac
 case "$(render "$u")" in
-    *"| plausible-worker | npm_and_yarn in /. for sharp | 2026-09-11 |"*)
+    *"| plausible-worker | npm_and_yarn in /. | 2026-09-11 |"*)
         ok "the failing job and the date both render" ;;
     *) no "the failing job and the date both render" \
           "$(render "$u" | grep '^| plausible' || echo 'no row')" ;; esac
@@ -139,6 +144,46 @@ if findings "$f" "$sup" 2026-09-12; then
 else
     no "a suppression does not leak to another advisory"
 fi
+
+echo "== updater: a security update counts only while its package has a finding =="
+# The case that held the issue open for months: a security-update job failed,
+# the advisory was then fixed another way, and the job - named for a package
+# that no longer needs it - never ran again. Its failure stayed its latest run.
+sec='updater\tplausible-worker\tnpm_and_yarn in /. for sharp\t2026-09-11\n'
+f="$(t "$sec")"
+if findings "$f"; then no "a settled security update does not hold the issue open"
+else ok "a settled security update does not hold the issue open"; fi
+case "$(render "$f")" in
+    *"## Dependabot updater"*|*"## Known and blocked"*) no "a settled security update is not rendered anywhere" ;;
+    *) ok "a settled security update is not rendered anywhere" ;; esac
+# Still live while the package has a finding, from either source.
+f="$(t "${sec}alert\tplausible-worker\tHIGH\tsharp\tGHSA-x\n")"
+case "$(render "$f")" in
+    *"## Dependabot updater failing (1)"*) ok "an open alert keeps the failed security update live" ;;
+    *) no "an open alert keeps the failed security update live" ;; esac
+f="$(t "${sec}audit\tplausible-worker\t.\thigh\tsharp\tGHSA-x\n")"
+case "$(render "$f")" in
+    *"## Dependabot updater failing (1)"*) ok "an audit finding keeps the failed security update live" ;;
+    *) no "an audit finding keeps the failed security update live" ;; esac
+# A suppressed finding is still a finding: the job still has something to fix.
+f="$(t "${sec}audit\tplausible-worker\t.\thigh\tsharp\tGHSA-x\n")"
+case "$(render "$f" "$sup" 2026-09-12)" in
+    *"## Dependabot updater failing (1)"*) ok "a suppressed finding keeps the failed security update live" ;;
+    *) no "a suppressed finding keeps the failed security update live" ;; esac
+# Matched per repo and per package, never across them.
+f="$(t "${sec}alert\tstats\tHIGH\tsharp\tGHSA-x\n")"
+case "$(render "$f")" in
+    *"Dependabot updater"*) no "another repo's finding does not keep it live" ;;
+    *) ok "another repo's finding does not keep it live" ;; esac
+f="$(t "${sec}alert\tplausible-worker\tHIGH\tesbuild\tGHSA-y\n")"
+case "$(render "$f")" in
+    *"Dependabot updater"*) no "another package's finding does not keep it live" ;;
+    *) ok "another package's finding does not keep it live" ;; esac
+# A name that is not "<ecosystem> in <dir> for <one package>" is kept: it is
+# reported rather than guessed away.
+f="$(t 'updater\tplausible-worker\tnpm_and_yarn in /. for the minor group\t2026-09-11\n')"
+if findings "$f"; then ok "a job name that does not parse is still reported"
+else no "a job name that does not parse is still reported"; fi
 
 echo "== render: a section with no rows is omitted, not shown empty =="
 f="$(t 'alert\tapt\tHIGH\tsharp\tGHSA-x\n')"
@@ -272,6 +317,21 @@ case "$(printf '%s' "$on" | coverage_rows apt PUBLIC 0)" in
 off='{"security_and_analysis":{"secret_scanning":{"status":"disabled"}}}'
 out="$(printf '%s' "$off" | coverage_rows new PUBLIC 1)"
 eq "both scanning settings are reported when off or unset" 2 "$(printf '%s\n' "$out" | grep -c .)"
+
+# GitHub returns security_and_analysis only to a caller with admin access, so a
+# repo the token cannot see has no block at all. That is not two settings off:
+# it rendered as "unset" twice for reproducible, whose settings were on.
+out="$(printf '%s' '{"name":"x"}' | coverage_rows reproducible PUBLIC 1)"
+eq "a repo the token cannot see is one not-readable row" \
+   "$(printf 'cover\treproducible\tsecurity settings\tnot readable')" "$out"
+case "$out" in
+    *unset*) no "and it is never reported as unset" "$out" ;;
+    *) ok "and it is never reported as unset" ;; esac
+f="$(t 'cover\treproducible\tsecurity settings\tnot readable\n')"
+case "$(render "$f")" in
+    *"## Security settings not enabled or not readable (1)"*"**not readable** means"*"| reproducible | security settings | not readable |"*)
+        ok "the section names both cases and explains not readable" ;;
+    *) no "the section names both cases and explains not readable" ;; esac
 
 # On this plan a private repository is refused rulesets outright and secret
 # scanning needs paid Advanced Security, so every check here would fire on wiki
