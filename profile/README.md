@@ -27,6 +27,9 @@ the edge, are published at [apt.pkg.haus/stats](https://apt.pkg.haus/stats).
 Every published version's build record and the source package it was built from
 are at [buildinfos.pkg.haus](https://buildinfos.pkg.haus), so "built from source"
 is something you can check rather than something we assert.
+[reproducible.pkg.haus](https://reproducible.pkg.haus) makes that check for
+every package: it rebuilds each one from its own build record and publishes
+whether the bytes match.
 
 ## How it works
 
@@ -48,6 +51,9 @@ is something you can check rather than something we assert.
   the signing key as a package, so key rotations arrive through `apt upgrade`.
   Its fingerprint is in
   [SECURITY.md](https://github.com/pkghaus/.github/blob/master/SECURITY.md).
+- [reproducible](https://github.com/pkghaus/reproducible): the verdicts.
+  Rebuilds every published package from its own build record with
+  `debrebuild` and records whether the bytes match: `GOOD`, `BAD` or `UNKWN`.
 
 ## Buy us a coffee?
 
