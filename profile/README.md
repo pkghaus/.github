@@ -53,7 +53,8 @@ whether the bytes match.
   [SECURITY.md](https://github.com/pkghaus/.github/blob/master/SECURITY.md).
 - [reproducible](https://github.com/pkghaus/reproducible): the verdicts.
   Rebuilds every published package from its own build record with
-  `debrebuild` and records whether the bytes match: `GOOD`, `BAD` or `UNKWN`.
+  `debrebuild`: `GOOD` when the bytes match, `BAD` when they differ, `UNKWN`
+  when the rebuild could not be completed.
 
 ## Buy us a coffee?
 
