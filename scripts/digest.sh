@@ -191,10 +191,11 @@ PREAMBLE
         # no text-align on th, so the browser default centres every header over
         # a left-aligned column, and a narrow table then reads as misaligned.
         printf '| repo | PR | checks | age | title |\n|:---|:---|:---|:---|:---|\n'
-        awk -F'\t' -v s="$STALE_DAYS" '$1=="pr" {
+        # A bare #N resolves against the repository holding this issue, not $2.
+        awk -F'\t' -v s="$STALE_DAYS" -v org="$ORG" '$1=="pr" {
             age = ($5 >= s) ? $5 " days, stale" : $5 " days"
             t = $6; gsub(/@/, "\\&#64;", t)
-            printf "| %s | #%s | %s | %s | %s |\n", $2, $3, $4, age, t
+            printf "| %s | [#%s](https://github.com/%s/%s/pull/%s) | %s | %s | %s |\n", $2, $3, org, $2, $3, $4, age, t
         }' "$act"
         printf '\n'
     fi

@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=65
+EXPECTED_ASSERTIONS=67
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -269,6 +269,18 @@ case "$(render "$f")" in *"9 days, stale"*) ok "an old pull request is called st
 f="$(t "pr\tapt\t7\tpassing\t$STALE_DAYS\tbump x\n")"
 case "$(render "$f")" in *"stale"*) ok "the threshold day itself counts as stale" ;;
                          *) no "the threshold day itself counts as stale" ;; esac
+
+echo "== render: a pull request links into its own repository =="
+# GitHub resolves a bare #N against the repository holding the issue, so the
+# first digest to list a PR linked to itself.
+f="$(t 'pr\tplausible-worker\t17\tpassing\t0\tbump x\n')"
+case "$(render "$f")" in
+    *"| plausible-worker | [#17](https://github.com/pkghaus/plausible-worker/pull/17) |"*)
+        ok "a pull request links into its own repository" ;;
+    *) no "a pull request links into its own repository" "$(render "$f" | grep '^| plausible' || echo 'no row')" ;; esac
+case "$(render "$f")" in
+    *"| #17 |"*) no "no bare #N reaches the body" ;;
+    *) ok "no bare #N reaches the body" ;; esac
 
 echo "== render: a title containing a pipe cannot break the table =="
 f="$(t 'pr\tapt\t7\tpassing\t1\tbump a\\|b\n')"
