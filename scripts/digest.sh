@@ -59,8 +59,8 @@ STALE_DAYS="${DIGEST_STALE_DAYS:-7}"
 # the finding returns and the issue reopens. A suppression without an expiry is
 # a silent pin.
 #
-# mode is "active" or "blocked". Blocked rows gain the review date and reason as
-# two more fields.
+# mode "active" prints the rows that count, as they are. Mode "blocked" prints
+# kind, repo, key, review-by and reason for each suppressed one.
 classify() { # <mode> <rows-file> [<suppressions-file>] [<today>]
     local mode="${1:?}" rows="${2:?}"
     local sup="${3:-$(dirname "${BASH_SOURCE[0]}")/../suppressions.tsv}"
@@ -121,12 +121,13 @@ for line in lines:
         if m and (f[1], m.group(1)) not in carried:
             continue   # settled: nothing left for this job to fix
     idx = KEY.get(f[0])
-    rule = rules.get((f[0], f[1], f[len(f) > idx and idx or 0])) if idx is not None and len(f) > idx else None
+    key = f[idx] if idx is not None and len(f) > idx else None
+    rule = rules.get((f[0], f[1], key)) if key is not None else None
     # An expired suppression is no suppression. Past the date the finding counts
     # again, which is what forces a second look instead of a permanent pin.
     if rule and rule[0] >= today:
         if mode == "blocked":
-            print(line + "\t" + rule[0] + "\t" + rule[1])
+            print("\t".join((f[0], f[1], key, rule[0], rule[1])))
     elif mode == "active":
         print(line)
 ' "$mode" "$rows" "$sup" "$today"
@@ -145,23 +146,19 @@ findings() { # <file> [<suppressions-file>] [<today>]
 
 # Rows in, markdown out.
 #
-# Every field that came from outside has its @ replaced with &#64;, which
-# renders identically and means nothing to GitHub's mention parser. A bare @name
-# in issue text is a link and a notification to whoever owns it, and every
-# scoped npm package begins with one: "@cloudflare/vitest-pool-workers" in a
-# table cell linked a real organization mid-sentence. Package names, pull
-# request titles and suppression reasons are all escaped. The cc line is not,
-# because that mention is the point. Sections are omitted entirely when they have no rows:
-# an empty heading reads as a clean bill of health for something that was never
-# checked.
+# Every row has its @ replaced with &#64; on the way in: it renders the same and
+# is not a mention, and every scoped npm package starts with one. The cc line is
+# printed separately, because that mention is the point. Sections are omitted
+# entirely when they have no rows: an empty heading reads as a clean bill of
+# health for something that was never checked.
 render() { # <file> [<suppressions-file>] [<today>]
     : "${1:?render needs a file}"
     # The rows file reaches classify through "$@", along with the optional
     # suppressions path and date, so it is not referenced again by name here.
     local n act blk
     act="$(mktemp)"; blk="$(mktemp)"
-    classify active "$@" > "$act"
-    classify blocked "$@" > "$blk"
+    classify active "$@" | sed 's/@/\&#64;/g' > "$act"
+    classify blocked "$@" | sed 's/@/\&#64;/g' > "$blk"
 
     # Short on purpose. Someone opening this wants to act, not to read the case
     # for the tool existing; that lives in the runbook. Only the two things
@@ -196,8 +193,7 @@ PREAMBLE
         # A bare #N resolves against the repository holding this issue, not $2.
         awk -F'\t' -v s="$STALE_DAYS" -v org="$ORG" '$1=="pr" {
             age = ($5 >= s) ? $5 " days, stale" : $5 " days"
-            t = $6; gsub(/@/, "\\&#64;", t)
-            printf "| %s | [#%s](https://github.com/%s/%s/pull/%s) | %s | %s | %s |\n", $2, $3, org, $2, $3, $4, age, t
+            printf "| %s | [#%s](https://github.com/%s/%s/pull/%s) | %s | %s | %s |\n", $2, $3, org, $2, $3, $4, age, $6
         }' "$act"
         printf '\n'
     fi
@@ -207,8 +203,7 @@ PREAMBLE
         printf '## npm audit (%s)\n\n' "$n"
         printf 'One row per advisory, not per package in the chain.\n\n'
         printf '| repo | manifest | severity | package | advisory |\n|:---|:---|:---|:---|:---|\n'
-        awk -F'\t' '$1=="audit" { p = $5; gsub(/@/, "\\&#64;", p)
-            printf "| %s | %s | %s | %s | %s |\n", $2, $3, $4, p, $6 }' "$act"
+        awk -F'\t' '$1=="audit" { printf "| %s | %s | %s | %s | %s |\n", $2, $3, $4, $5, $6 }' "$act"
         printf '\n'
     fi
 
@@ -216,8 +211,7 @@ PREAMBLE
     if [ "$n" -gt 0 ]; then
         printf '## Dependabot alerts (%s)\n\n' "$n"
         printf '| repo | severity | package | advisory |\n|:---|:---|:---|:---|\n'
-        awk -F'\t' '$1=="alert" { p = $4; gsub(/@/, "\\&#64;", p)
-            printf "| %s | %s | %s | %s |\n", $2, $3, p, $5 }' "$act"
+        awk -F'\t' '$1=="alert" { printf "| %s | %s | %s | %s |\n", $2, $3, $4, $5 }' "$act"
         printf '\n'
     fi
 
@@ -226,8 +220,7 @@ PREAMBLE
         printf '## Dependabot updater failing (%s)\n\n' "$n"
         printf 'The update job itself errored, so it opened no pull request and changed no alert. A repository whose updater is broken otherwise looks exactly like one with nothing to do.\n\n'
         printf '| repo | update job | failing since |\n|:---|:---|:---|\n'
-        awk -F'\t' '$1=="updater" { j = $3; gsub(/@/, "\\&#64;", j)
-            printf "| %s | %s | %s |\n", $2, j, $4 }' "$act"
+        awk -F'\t' '$1=="updater" { printf "| %s | %s | %s |\n", $2, $3, $4 }' "$act"
         printf '\n'
     fi
 
@@ -258,12 +251,7 @@ PREAMBLE
         # advisory id to paste into a search. The header alignment below is the
         # part that IS fixable, and it is fixed.
         printf '| repo | finding | review by | why |\n|:---|:---|:---|:---|\n'
-        awk -F'\t' '{
-            key = ($1=="audit") ? $6 : ($1=="alert") ? $5 : $3
-            n = NF
-            why = $n; gsub(/@/, "\\&#64;", why)
-            printf "| %s | %s %s | %s | %s |\n", $2, $1, key, $(n-1), why
-        }' "$blk"
+        awk -F'\t' '{ printf "| %s | %s %s | %s | %s |\n", $2, $1, $3, $4, $5 }' "$blk"
         printf '\n'
     fi
 

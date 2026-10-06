@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=72
+EXPECTED_ASSERTIONS=74
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -296,6 +296,21 @@ f="$(t 'pr\tapt\t7\tpassing\t1\tbump @scope/thing\n')"
 case "$(render "$f")" in
     *"&#64;scope/thing"*) ok "a pull request title is escaped too" ;;
     *) no "a pull request title is escaped too" ;; esac
+# Columns that never had an escape of their own: a manifest path and a blocked
+# key. The suppression is written with the raw @ and must still match.
+f="$(t 'audit\tapt\tpackages/@pkghaus/x\thigh\tsharp\tGHSA-y\n')"
+case "$(render "$f")" in
+    *"| apt | packages/&#64;pkghaus/x | high |"*) ok "an @ in an audit manifest path is escaped" ;;
+    *) no "an @ in an audit manifest path is escaped" "$(render "$f" | grep '^| apt' || echo 'no row')" ;; esac
+scoped='npm_and_yarn in /. for @cloudflare/vitest-pool-workers'
+f="$(t "updater\tplausible-worker\t$scoped\t2026-09-11\nalert\tplausible-worker\tHIGH\t@cloudflare/vitest-pool-workers\tGHSA-q\n")"
+ssup="$work/scoped-sup.tsv"
+printf 'updater\tplausible-worker\t%s\t2099-01-01\tblocked upstream\n' "$scoped" > "$ssup"
+case "$(render "$f" "$ssup" 2026-09-13)" in
+    *"| plausible-worker | updater npm_and_yarn in /. for &#64;cloudflare/vitest-pool-workers | 2099-01-01 |"*)
+        ok "an @ in a blocked updater key is escaped" ;;
+    *) no "an @ in a blocked updater key is escaped" \
+          "$(render "$f" "$ssup" 2026-09-13 | grep '^| plausible-worker | updater' || echo 'no row')" ;; esac
 # The cc line is a mention on purpose and must survive.
 f="$(t 'alert\tapt\tHIGH\tsharp\tGHSA-x\n')"
 case "$(DIGEST_TEAM=pkghaus/maintainers render "$f")" in
