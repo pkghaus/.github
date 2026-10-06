@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=67
+EXPECTED_ASSERTIONS=72
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -43,6 +43,51 @@ if findings "$f"; then no "a comment alone reports nothing"; else ok "a comment 
 
 f="$(t 'alert\tapt\tHIGH\tsharp\tGHSA-x\n')"
 if findings "$f"; then ok "one row reports something"; else no "one row reports something"; fi
+
+# 1 closes the issue, so a failure must come back as something else. A Latin-1
+# byte in suppressions.tsv makes classify raise UnicodeDecodeError.
+latin1="$work/latin1-sup.tsv"
+printf 'alert\tapt\tGHSA-zz\t2026-12-01\tr\xe9sum\xe9\n' > "$latin1"
+rc=0; findings "$f" "$latin1" 2026-09-12 2>/dev/null || rc=$?
+eq "a classify crash is not read as nothing" 2 "$rc"
+rc=0; findings "$work/absent.tsv" 2>/dev/null || rc=$?
+eq "a missing findings file is not read as nothing" 2 "$rc"
+
+echo "== digest.yml: only findings exit 1 closes the issue =="
+# The step's own run block, executed with gh and digest.sh stubbed.
+step="$work/step.sh"
+awk '
+    /- name: Open, update or close the issue/ { want = 1; next }
+    { l = $0; sub(/^ +/, "", l); ind = length($0) - length(l) }
+    want && l == "run: |" { runind = ind; inrun = 1; next }
+    inrun && l != "" && ind <= runind { exit }
+    inrun { print substr($0, runind + 3) }
+' "$ROOT/.github/workflows/digest.yml" > "$step"
+# shellcheck disable=SC2016  # stub source, expanded when the stub runs
+run_step() { # <findings-exit-code>; the step exit code in $rc, gh calls in $d/gh.log
+    d="$work/step-$1"
+    mkdir -p "$d/scripts" "$d/bin"
+    printf '#!/bin/sh\n[ "$1" = findings ] && exit %s\necho body\n' "$1" > "$d/scripts/digest.sh"
+    printf '#!/bin/sh\necho "$*" >> "%s/gh.log"\n[ "$1 $2" = "issue list" ] && echo 5\nexit 0\n' "$d" > "$d/bin/gh"
+    : > "$d/gh.log"
+    chmod +x "$d/scripts/digest.sh" "$d/bin/gh"
+    rc=0
+    ( cd "$d" && PATH="$d/bin:$PATH" REPO=pkghaus/.github ASSIGNEE='' \
+        bash -e "$step" >/dev/null 2>&1 ) || rc=$?
+}
+run_step 1
+case "$rc $(cat "$d/gh.log")" in
+    "0 "*"issue close 5"*) ok "findings exit 1 closes the open issue" ;;
+    *) no "findings exit 1 closes the open issue" "rc=$rc gh: $(cat "$d/gh.log")" ;; esac
+run_step 2
+case "$rc $(cat "$d/gh.log")" in
+    0*|*"issue close"*|*"issue edit"*|*"issue create"*)
+        no "findings exit 2 fails the job and leaves the issue alone" "rc=$rc gh: $(cat "$d/gh.log")" ;;
+    *) ok "findings exit 2 fails the job and leaves the issue alone" ;; esac
+run_step 0
+case "$rc $(cat "$d/gh.log")" in
+    "0 "*"issue edit 5"*) ok "findings exit 0 updates the open issue" ;;
+    *) no "findings exit 0 updates the open issue" "rc=$rc gh: $(cat "$d/gh.log")" ;; esac
 
 echo "== suppressions: known findings render but do not hold the issue open =="
 sup="$work/sup.tsv"

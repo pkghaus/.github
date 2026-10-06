@@ -96,7 +96,10 @@ jobs:
           existing="$(gh issue list --repo "$REPO" --state open --label dependency-digest \
               --json number --jq '.[0].number // empty')"
 
-          if ! scripts/digest.sh findings findings.tsv; then
+          # Only 1 means nothing to report; any other failure must not close the issue.
+          rc=0
+          scripts/digest.sh findings findings.tsv || rc=$?
+          if [ "$rc" -eq 1 ]; then
               if [ -n "$existing" ]; then
                   gh issue close "$existing" --repo "$REPO" \
                       --comment "Nothing needs attention. A new issue opens if that changes; this one is not reopened."
@@ -105,6 +108,9 @@ jobs:
                   echo "nothing to report, no issue open"
               fi
               exit 0
+          elif [ "$rc" -ne 0 ]; then
+              echo "::error title=digest.sh findings failed::exit $rc, so the issue is left as it is" >&2
+              exit "$rc"
           fi
 
           scripts/digest.sh render findings.tsv > body.md

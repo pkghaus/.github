@@ -8,7 +8,7 @@
 #
 #   digest.sh collect          gather everything, one TSV row per finding
 #   digest.sh render <file>    that TSV as an issue body
-#   digest.sh findings <file>  exit 0 when there is something to report
+#   digest.sh findings <file>  exit 0 something to report, 1 nothing, else unknown
 #
 # Split three ways so the two that decide anything can be tested without a
 # network: render and findings are pure functions of the TSV.
@@ -134,11 +134,13 @@ for line in lines:
 
 # Anything at all to report? Blank lines and comments do not count, so a file
 # that is technically non-empty but says nothing still closes the issue.
+# Returns 2 when classify fails: 1 closes the issue, so a crash must not be 1.
 findings() { # <file> [<suppressions-file>] [<today>]
-    local rows="${1:?findings needs a file}"
-    [ -s "$rows" ] || return 1
+    : "${1:?findings needs a file}"
+    local active
     # Suppressed rows still render; they just do not hold the issue open.
-    [ -n "$(classify active "$@")" ]
+    active="$(classify active "$@")" || return 2
+    [ -n "$active" ]
 }
 
 # Rows in, markdown out.
