@@ -1,15 +1,9 @@
 # Findings that are known, understood and cannot be fixed here yet.
 #
-# A suppressed finding is NOT hidden. It still appears in the digest, in its own
-# section, with the reason and the date it must be looked at again. What it does
-# not do is hold the issue open: an issue that can never close stops being a
-# signal, which is the same disease as one that lists successes.
-#
-# The review date is the part that matters. A suppression with no expiry is a
-# silent pin, which is how this estate ended up carrying a lintian override that
-# had suppressed nothing for ten days. After the date passes the finding counts
-# again and the issue reopens, so the worst case is being asked a second time
-# rather than never being asked.
+# A suppressed finding still renders, in its own section with its reason and
+# review date, but does not hold the issue open: an issue that can never close
+# stops being read. After the review date it counts again (and opens a new
+# issue if none is open), so a suppression cannot become a silent pin.
 #
 # Tab separated:  <kind>  <repo>  <key>  <review-by YYYY-MM-DD>  <reason>
 #

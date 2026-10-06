@@ -1,9 +1,6 @@
 name: CI
 
-# The digest ships tests, so something has to run them. This repository had no
-# workflows at all before the digest landed, which is the state that lets a
-# suite rot quietly: it passes on the machine of whoever last touched it and
-# nowhere else.
+# The only place the digest's suite and linters run.
 
 on:
   push:
