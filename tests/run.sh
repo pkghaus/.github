@@ -406,11 +406,11 @@ case "$(render "$f")" in
     *) no "the section names both cases and explains not readable" ;; esac
 
 # On this plan a private repository is refused rulesets outright and secret
-# scanning needs paid Advanced Security, so every check here would fire on wiki
-# and brand every week forever. The live dry run produced exactly those four
+# scanning needs paid Advanced Security, so every check here would fire on every
+# private repository every week forever. The live dry run produced exactly those four
 # rows before this exemption existed.
-eq "a private repo yields nothing at all" "" "$(printf '%s' "$off" | coverage_rows wiki PRIVATE na)"
-eq "a private repo is not faulted for having no ruleset" "" "$(printf '%s' "$on" | coverage_rows brand PRIVATE na)"
+eq "a private repo yields nothing at all" "" "$(printf '%s' "$off" | coverage_rows private-a PRIVATE na)"
+eq "a private repo is not faulted for having no ruleset" "" "$(printf '%s' "$on" | coverage_rows private-b PRIVATE na)"
 
 # It must DRAIN stdin before deciding. Exiting early hands the producer an
 # EPIPE, which pipefail turns into a failed pipeline and set -e turns into an
@@ -418,7 +418,7 @@ eq "a private repo is not faulted for having no ruleset" "" "$(printf '%s' "$on"
 # audit, and rendered as a quiet week. Reproduced with a producer large enough
 # that it cannot have been buffered away.
 if ( set -o pipefail
-     python3 -c 'print("x" * 200000)' | coverage_rows wiki PRIVATE na >/dev/null ); then
+     python3 -c 'print("x" * 200000)' | coverage_rows private-a PRIVATE na >/dev/null ); then
     ok "an exempt repo still drains stdin, so the producer sees no EPIPE"
 else
     no "an exempt repo still drains stdin" "the pipeline failed, which set -e would make fatal"
