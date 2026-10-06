@@ -15,8 +15,8 @@ name: Dependency digest
 # created it, whatever its resource owner, so the first version opened the issue
 # as the assignee and then self-assigned it. GitHub does not notify you about
 # your own actions, so the notification the assignment existed for never
-# arrived. Reads need org-wide access and stay on the PAT; the issue is written
-# by GITHUB_TOKEN, which is scoped to this repository and acts as
+# arrived. Reads need the other repositories and stay on the PAT; the issue
+# is written by GITHUB_TOKEN, which is scoped to this repository and acts as
 # github-actions[bot], so assigning a person is a real notification.
 
 on:
@@ -48,14 +48,15 @@ jobs:
           node-version: '22'
 
       # GITHUB_TOKEN is scoped to THIS repository, and every read here is about
-      # the others, so a token with org-wide read is required. Fine-grained, all
-      # repositories, READ ONLY: Metadata, Contents, Pull requests, Actions,
+      # the others, so a second token is required. Fine-grained, SELECTED
+      # repositories (the public ones; a new or recreated repository is added
+      # by hand), READ ONLY: Metadata, Contents, Pull requests, Actions,
       # Dependabot alerts, Administration.
       #
       # NOT Issues. The digest's own issue is written by the step below under
       # GITHUB_TOKEN, deliberately, so that it is authored by the app rather
-      # than by the token's creator. A write scope here would grant org-wide
-      # issue write to a secret that only ever reads.
+      # than by the token's creator. A write scope here would grant issue write
+      # on every selected repository to a secret that only ever reads.
       #
       # Actions is the one to watch. collect_updater reads each repo's
       # dependabot-updates runs, and without that scope it returns nothing --
