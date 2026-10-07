@@ -497,7 +497,7 @@ fixture() { # <endpoint-path> <json>, into the current $fx
 b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
 run_in() { # <command...> against $fx; exit code in $rc, stdout in $out, stderr in $err
     rc=0
-    FX="$fx" DIGEST_ORG=pkghaus TMPDIR="$fx" PATH="$stubs:$PATH" "$@" >"$fx/out" 2>"$fx/err" || rc=$?
+    FX="$fx" TMPDIR="$fx" PATH="$stubs:$PATH" "$@" >"$fx/out" 2>"$fx/err" || rc=$?
     out="$(cat "$fx/out")"; err="$(cat "$fx/err")"
 }
 # A fresh bash, so errexit is the script's own and not suspended by this suite's ||.
