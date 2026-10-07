@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=77
+EXPECTED_ASSERTIONS=105
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -432,6 +432,205 @@ if ( set -o pipefail
 else
     no "an exempt repo still drains stdin" "the pipeline failed, which set -e would make fatal"
 fi
+
+echo "== collect: a failed read fails the run, and only real emptiness is empty =="
+# Zero rows renders as a quiet week, so a failed read must fail instead. Each
+# collector runs against a stubbed gh: once with a row, once legitimately
+# empty and once refused.
+stubs="$work/stubs"
+mkdir -p "$stubs"
+cat > "$stubs/gh" <<'STUB'
+#!/usr/bin/env bash
+# gh as collect calls it. "api <path>" answers $FX/<path>.json through --jq.
+# With no fixture it fails as gh does: exit 1, a message on stderr, and only
+# from gh api the error body on stdout, unfiltered. $FX/bodyless makes it a
+# failure with no body at all, as gh gives for a 502.
+echo "$*" >> "$FX/calls"
+case "$1 $2" in
+    "repo list") f="$FX/repo-list.json" ;;
+    "pr list")   f="$FX/pr-list/${4#*/}.json" ;;
+    *)           f="$FX/${2#/}"; f="${f%%\?*}.json" ;;
+esac
+cmd="$1"
+q=.
+while [ $# -gt 0 ]; do [ "$1" = --jq ] && q="$2"; shift; done
+if [ -f "$FX/bodyless" ] && [ ! -f "$f" ]; then
+    echo "gh: HTTP 502" >&2
+    exit 1
+elif [ ! -f "$f" ]; then
+    [ "$cmd" = api ] && echo '{"message":"Not Found","status":"404"}'
+    echo "gh: Not Found (HTTP 404)" >&2
+    exit 1
+fi
+exec jq -r "$q" "$f"
+STUB
+# npm audit exits 1 when it finds something. It prints only once both fetched
+# files are in place, so a fetch that wrote nothing shows as a missing row.
+cat > "$stubs/npm" <<'STUB'
+#!/bin/sh
+[ -s package.json ] && [ -s package-lock.json ] && cat "$FX/npm-audit.json"
+exit 1
+STUB
+chmod +x "$stubs/gh" "$stubs/npm"
+
+nfx=0
+fresh() { nfx=$((nfx + 1)); fx="$work/fx-$nfx"; mkdir -p "$fx"; }
+fixture() { # <endpoint-path> <json>, into the current $fx
+    mkdir -p "$(dirname "$fx/$1")"; printf '%s\n' "$2" > "$fx/$1.json"
+}
+b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+run_in() { # <command...> against $fx; exit code in $rc, stdout in $out, stderr in $err
+    rc=0
+    FX="$fx" DIGEST_ORG=pkghaus TMPDIR="$fx" PATH="$stubs:$PATH" "$@" >"$fx/out" 2>"$fx/err" || rc=$?
+    out="$(cat "$fx/out")"; err="$(cat "$fx/err")"
+}
+# A fresh bash, so errexit is the script's own and not suspended by this suite's ||.
+# shellcheck disable=SC2016  # expanded by that bash, not this one
+collector() { run_in bash -c '. "$1"; shift; "$@"' _ "$ROOT/scripts/digest.sh" "$@"; }
+# The refusal fails the call, and gh's own message survives so the job says why.
+refused() {
+    case "$rc:$err" in
+        0:*) no "$1" "exit 0, rows [$out]" ;;
+        *"HTTP 404"*|*"HTTP 502"*) ok "$1" ;;
+        *) no "$1" "exit $rc, but gh's message is not on stderr: [$err]" ;;
+    esac
+}
+nothing() { eq "$1" "0:" "$rc:$out"; }
+
+alert='[{"repository":{"name":"apt"},"security_advisory":{"severity":"high","ghsa_id":"GHSA-x"},"dependency":{"package":{"name":"sharp"}}}]'
+fresh; fixture orgs/pkghaus/dependabot/alerts "$alert"
+collector collect_alerts
+eq "an open alert is one row" "0:$(printf 'alert\tapt\tHIGH\tsharp\tGHSA-x')" "$rc:$out"
+case "$(cat "$fx/calls")" in
+    *--paginate*) ok "alerts are read past the first page" ;;
+    *) no "alerts are read past the first page" "$(cat "$fx/calls")" ;; esac
+fresh; fixture orgs/pkghaus/dependabot/alerts '[]'
+collector collect_alerts
+nothing "no open alerts is no rows"
+fresh
+collector collect_alerts
+refused "a refused alerts read fails, and says why"
+
+fresh; fixture pr-list/apt '[]'
+collector collect_prs apt
+nothing "no open pull requests is no rows"
+fresh
+collector collect_prs apt
+refused "a refused pull request read fails, and says why"
+
+wfs='{"workflows":[{"id":3,"path":".github/workflows/ci.yml"},{"id":7,"path":"dynamic/dependabot/dependabot-updates"}]}'
+runs='{"workflow_runs":[
+  {"name":"npm_and_yarn in /. - Update #2","conclusion":"failure","created_at":"2026-09-11T07:00:00Z"},
+  {"name":"npm_and_yarn in /. - Update #1","conclusion":"success","created_at":"2026-09-04T07:00:00Z"}]}'
+fresh; fixture repos/pkghaus/apt/actions/workflows "$wfs"; fixture repos/pkghaus/apt/actions/workflows/7/runs "$runs"
+collector collect_updater apt
+eq "a failed newest update run is one row" "0:$(printf 'updater\tapt\tnpm_and_yarn in /.\t2026-09-11')" "$rc:$out"
+# No runs fixture: reading one would be refused, so this also proves none is read.
+fresh; fixture repos/pkghaus/apt/actions/workflows '{"workflows":[{"id":3,"path":".github/workflows/ci.yml"}]}'
+collector collect_updater apt
+nothing "a repository with no updater workflow is no rows"
+fresh; fixture repos/pkghaus/apt/actions/workflows "$wfs"
+fixture repos/pkghaus/apt/actions/workflows/7/runs '{"workflow_runs":[
+  {"name":"npm_and_yarn in /. - Update #3","conclusion":"success","created_at":"2026-09-18T07:00:00Z"}]}'
+collector collect_updater apt
+nothing "an updater whose newest run passed is no rows"
+fresh
+collector collect_updater apt
+refused "a refused workflow list fails, and says why"
+# The 404 body lands in wf and is non-empty; with no body, only the exit status
+# is left to tell a failed read from a repository with no updater.
+fresh; : > "$fx/bodyless"
+collector collect_updater apt
+refused "a workflow list failing with no body fails too"
+fresh; fixture repos/pkghaus/apt/actions/workflows "$wfs"
+collector collect_updater apt
+refused "a refused run list fails, and says why"
+
+lockfile=repos/pkghaus/apt/contents/worker/package-lock.json
+manifest=repos/pkghaus/apt/contents/worker/package.json
+audited() { # everything one worker lockfile needs, and npm's verdict on it
+    fixture repos/pkghaus/apt/git/trees/HEAD \
+        '{"tree":[{"path":"README.md"},{"path":"worker/package-lock.json"},{"path":"worker/node_modules/x/package-lock.json"}]}'
+    fixture "$lockfile" "{\"content\":\"$(b64 '{"lockfileVersion":3}')\"}"
+    fixture "$manifest" "{\"content\":\"$(b64 '{"name":"worker"}')\"}"
+    printf '%s\n' "$chain" > "$fx/npm-audit.json"
+}
+fresh; audited
+collector collect_audit apt
+eq "an audited advisory is one row, npm's exit 1 notwithstanding" \
+   "0:$(printf 'audit\tapt\tworker\thigh\tsharp\tGHSA-rgj7-g3m4-5g8c')" "$rc:$out"
+fresh; fixture repos/pkghaus/apt/git/trees/HEAD '{"tree":[{"path":"README.md"}]}'
+collector collect_audit apt
+nothing "a repository with no lockfile is no rows"
+fresh
+collector collect_audit apt
+refused "a refused tree read fails, and says why"
+# A 404 body would be iterated as lockfile paths and fail on the next fetch,
+# hiding a swallowed exit. With no body, nothing else can fail.
+fresh; : > "$fx/bodyless"
+collector collect_audit apt
+refused "a tree read failing with no body fails too"
+fresh; audited; rm "$fx/$lockfile.json"
+collector collect_audit apt
+refused "a refused lockfile read fails, and says why"
+fresh; audited; rm "$fx/$manifest.json"
+collector collect_audit apt
+refused "a refused package.json read fails, and says why"
+
+fresh; fixture repos/pkghaus/apt/rulesets '[{"id":1}]'; fixture repos/pkghaus/apt "$on"
+collector collect_coverage apt PUBLIC
+nothing "a fully covered public repository is no rows"
+fresh; fixture repos/pkghaus/apt/rulesets '[]'; fixture repos/pkghaus/apt "$on"
+collector collect_coverage apt PUBLIC
+eq "a public repository with no ruleset is one row" "0:$(printf 'cover\tapt\truleset\tnone')" "$rc:$out"
+fresh; fixture repos/pkghaus/apt "$on"
+collector collect_coverage apt PUBLIC
+refused "a refused ruleset read fails, and says why"
+fresh; fixture repos/pkghaus/apt/rulesets '[]'
+collector collect_coverage apt PUBLIC
+refused "a refused repository read fails, and says why"
+fresh
+collector collect_coverage private-a PRIVATE
+nothing "a private repository is not read at all"
+
+# The whole run, through the script's own entry point: two clean repositories
+# and an archived one that has no fixtures, so reading it would be refused.
+org() {
+    fixture repo-list '[{"name":"apt","isArchived":false,"visibility":"PUBLIC","isEmpty":false},
+                        {"name":"stats","isArchived":false,"visibility":"PUBLIC","isEmpty":false},
+                        {"name":"old","isArchived":true,"visibility":"PUBLIC","isEmpty":false}]'
+    fixture orgs/pkghaus/dependabot/alerts "$alert"
+    local r
+    for r in apt stats; do
+        fixture "pr-list/$r" '[]'
+        fixture "repos/pkghaus/$r/actions/workflows" '{"workflows":[]}'
+        fixture "repos/pkghaus/$r/git/trees/HEAD" '{"tree":[]}'
+        fixture "repos/pkghaus/$r/rulesets" '[{"id":1}]'
+        fixture "repos/pkghaus/$r" "$on"
+    done
+}
+fresh; org
+run_in "$ROOT/scripts/digest.sh" collect
+eq "a clean org collects its one alert and exits 0" "0:$(printf 'alert\tapt\tHIGH\tsharp\tGHSA-x')" "$rc:$out"
+fresh; org; rm "$fx/repos/pkghaus/stats/git/trees/HEAD.json"
+run_in "$ROOT/scripts/digest.sh" collect
+refused "one repository's refused read fails the whole collect"
+fresh; org; rm "$fx/repo-list.json"
+run_in "$ROOT/scripts/digest.sh" collect
+refused "a refused repository list fails collect"
+fresh; org; fixture repo-list '[]'
+run_in "$ROOT/scripts/digest.sh" collect
+case "$rc:$err" in
+    0:*) no "an org with no repositories listed fails collect" "exit 0" ;;
+    *"no repositories listed"*) ok "an org with no repositories listed fails collect" ;;
+    *) no "an org with no repositories listed fails collect" "exit $rc, stderr [$err]" ;;
+esac
+# GitHub has no HEAD tree to give for a repository with no commits.
+fresh; org; rm "$fx/repos/pkghaus/stats/git/trees/HEAD.json"
+fixture repo-list '[{"name":"apt","isArchived":false,"visibility":"PUBLIC","isEmpty":false},
+                    {"name":"stats","isArchived":false,"visibility":"PUBLIC","isEmpty":true}]'
+run_in "$ROOT/scripts/digest.sh" collect
+eq "an empty repository is not asked for its tree" "0:$(printf 'alert\tapt\tHIGH\tsharp\tGHSA-x')" "$rc:$out"
 
 printf '\n%s passed, %s failed\n' "$(grep -c ok "$TALLY")" "$fail"
 ran=$(grep -c . "$TALLY")

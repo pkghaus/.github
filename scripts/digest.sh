@@ -260,11 +260,13 @@ if rulesets.isdigit() and int(rulesets) == 0:
 }
 
 # --- collection, which needs a network and a token ---------------------------
+#
+# A failed read fails collect. Swallowed, it would render as a quiet week.
 
-# Non-archived repositories, one per line.
+# Non-archived repositories, one per line: name, visibility, isEmpty.
 repos() {
-    gh repo list "$ORG" --limit 200 --json name,isArchived,visibility \
-        --jq '.[] | select(.isArchived == false) | "\(.name)\t\(.visibility)"'
+    gh repo list "$ORG" --limit 200 --json name,isArchived,visibility,isEmpty \
+        --jq '.[] | select(.isArchived == false) | "\(.name)\t\(.visibility)\t\(.isEmpty)"'
 }
 
 # Open Dependabot pull requests with a rolled-up check verdict. A pull request
@@ -274,7 +276,7 @@ collect_prs() { # <repo>
     local repo="$1" now
     now="$(date -u +%s)"
     gh pr list --repo "$ORG/$repo" --state open --author app/dependabot \
-        --json number,title,createdAt,statusCheckRollup 2>/dev/null \
+        --json number,title,createdAt,statusCheckRollup \
     | python3 -c '
 import json,sys,datetime
 repo, now = sys.argv[1], int(sys.argv[2])
@@ -293,11 +295,12 @@ for pr in json.load(sys.stdin):
 }
 
 # Org-level Dependabot alerts. This endpoint answers on free even though the
-# dashboard built on it does not exist here.
+# dashboard built on it does not exist here. --jq runs once per page, so the
+# filter must not aggregate.
 collect_alerts() {
-    gh api "/orgs/$ORG/dependabot/alerts?state=open&per_page=100" \
+    gh api "/orgs/$ORG/dependabot/alerts?state=open&per_page=100" --paginate \
         --jq '.[] | ["alert", .repository.name, (.security_advisory.severity|ascii_upcase),
-                     .dependency.package.name, .security_advisory.ghsa_id] | @tsv' 2>/dev/null || true
+                     .dependency.package.name, .security_advisory.ghsa_id] | @tsv'
 }
 
 # Each Dependabot update job whose newest run failed. Per job, because a newer
@@ -306,58 +309,65 @@ collect_alerts() {
 collect_updater() { # <repo>
     local repo="$1" wf
     wf="$(gh api "repos/$ORG/$repo/actions/workflows" \
-          --jq '.workflows[] | select(.path=="dynamic/dependabot/dependabot-updates") | .id' \
-          2>/dev/null)" || return 0
+          --jq '.workflows[] | select(.path=="dynamic/dependabot/dependabot-updates") | .id')"
+    # No such workflow means Dependabot has never run here, not a failed read.
     [ -n "$wf" ] || return 0
-    gh api "repos/$ORG/$repo/actions/workflows/$wf/runs?per_page=100" 2>/dev/null \
+    gh api "repos/$ORG/$repo/actions/workflows/$wf/runs?per_page=100" \
     | jq -r --arg repo "$repo" '
         [.workflow_runs[] | {job: (.name | sub(" - Update #[0-9]+$"; "")),
                              c: .conclusion, d: .created_at}]
         | group_by(.job) | map(max_by(.d))
         | .[] | select(.c == "failure")
-        | ["updater", $repo, (.job | gsub("\t"; " ")), .d[0:10]] | @tsv' 2>/dev/null || true
+        | ["updater", $repo, (.job | gsub("\t"; " ")), .d[0:10]] | @tsv'
 }
 
 # Every committed lockfile, audited. Fetched rather than cloned: two files per
 # manifest against a full checkout of every repository.
 collect_audit() { # <repo>
-    local repo="$1" lock dir work
-    for lock in $(gh api "repos/$ORG/$repo/git/trees/HEAD?recursive=1" \
+    local repo="$1" locks lock dir work
+    # Assigned first: a command substitution failing in a for list trips nothing.
+    locks="$(gh api "repos/$ORG/$repo/git/trees/HEAD?recursive=1" \
             --jq '.tree[] | select(.path | endswith("package-lock.json"))
-                  | select(.path | contains("node_modules") | not) | .path' 2>/dev/null); do
+                  | select(.path | contains("node_modules") | not) | .path')"
+    for lock in $locks; do
         dir="$(dirname "$lock")"
         work="$(mktemp -d)"
-        if gh api "repos/$ORG/$repo/contents/$lock" --jq '.content' 2>/dev/null \
-               | base64 -d > "$work/package-lock.json" \
-           && gh api "repos/$ORG/$repo/contents/${dir#./}/package.json" --jq '.content' 2>/dev/null \
-               | base64 -d > "$work/package.json"; then
-            ( cd "$work" && npm audit --json 2>/dev/null || true ) \
-                | audit_rows "$repo" "${dir#./}"
-        fi
+        gh api "repos/$ORG/$repo/contents/$lock" --jq '.content' \
+            | base64 -d > "$work/package-lock.json"
+        gh api "repos/$ORG/$repo/contents/${dir#./}/package.json" --jq '.content' \
+            | base64 -d > "$work/package.json"
+        # npm audit exits 1 whenever it finds something; the JSON is the result.
+        ( cd "$work" && npm audit --json 2>/dev/null || true ) \
+            | audit_rows "$repo" "${dir#./}"
         rm -rf "$work"
     done
 }
 
 # Security settings, public repositories only (coverage_rows says why).
 collect_coverage() { # <repo> <visibility>
-    local repo="$1" vis="$2" rulesets=na
+    local repo="$1" vis="$2" rulesets
     [ "$vis" = PUBLIC ] || return 0
-    if [ "$vis" = PUBLIC ]; then
-        rulesets="$(gh api "repos/$ORG/$repo/rulesets" --jq 'length' 2>/dev/null || echo na)"
-    fi
-    gh api "repos/$ORG/$repo" 2>/dev/null | coverage_rows "$repo" "$vis" "$rulesets"
+    rulesets="$(gh api "repos/$ORG/$repo/rulesets" --jq 'length')"
+    gh api "repos/$ORG/$repo" | coverage_rows "$repo" "$vis" "$rulesets"
 }
 
 collect() {
-    local repo vis
+    local list repo vis empty
     collect_alerts
-    while IFS=$'\t' read -r repo vis; do
+    # Assigned, not read from < <(repos): a failed process substitution trips nothing.
+    list="$(repos)"
+    # No repository at all is a read that went wrong, never a clean org.
+    [ -n "$list" ] || { echo "digest.sh: no repositories listed for $ORG" >&2; return 1; }
+    while IFS=$'\t' read -r repo vis empty; do
         [ -n "$repo" ] || continue
         collect_prs "$repo"
         collect_updater "$repo"
-        collect_audit "$repo"
+        # An empty repository has no HEAD tree to list lockfiles from.
+        if [ "$empty" != true ]; then
+            collect_audit "$repo"
+        fi
         collect_coverage "$repo" "$vis"
-    done < <(repos)
+    done <<< "$list"
 }
 
 # Sourced by the tests to reach the pure functions above. Without the guard the

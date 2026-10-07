@@ -45,11 +45,9 @@ jobs:
       # NOT Issues: the issue is written under GITHUB_TOKEN by the last step, so
       # this secret never needs a write scope.
       #
-      # Actions is the one to watch. collect_updater reads each repo's
-      # dependabot-updates runs, and without that scope it returns nothing --
-      # which renders identically to "no updater run failed", because the
-      # section is omitted when the count is zero. A missing scope is therefore
-      # invisible in the output, unlike the others.
+      # Any read that errors fails this step, and the job with it, rather
+      # than counting as no findings: the issue is left as the last good run
+      # wrote it.
       - name: Collect
         env:
           GH_TOKEN: ${{ secrets.DIGEST_TOKEN }}
@@ -60,8 +58,8 @@ jobs:
               exit 1
           fi
           scripts/digest.sh collect > findings.tsv
-          # Loud rather than quiet: a token that silently lost a scope returns
-          # empty for everything, which renders as a clean week.
+          # A read that errors fails the line above. One that succeeds with less
+          # than it should fails nothing, so the count is logged to compare runs.
           echo "collected $(grep -c . findings.tsv || true) rows"
 
       - name: Open, update or close the issue
