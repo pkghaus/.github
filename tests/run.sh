@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=67
+EXPECTED_ASSERTIONS=77
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -43,6 +43,56 @@ if findings "$f"; then no "a comment alone reports nothing"; else ok "a comment 
 
 f="$(t 'alert\tapt\tHIGH\tsharp\tGHSA-x\n')"
 if findings "$f"; then ok "one row reports something"; else no "one row reports something"; fi
+
+# 1 closes the issue, so a failure must come back as something else. A Latin-1
+# byte in suppressions.tsv makes classify raise UnicodeDecodeError.
+latin1="$work/latin1-sup.tsv"
+printf 'alert\tapt\tGHSA-zz\t2026-12-01\tr\xe9sum\xe9\n' > "$latin1"
+rc=0; findings "$f" "$latin1" 2026-09-12 2>/dev/null || rc=$?
+eq "a classify crash is not read as nothing" 2 "$rc"
+rc=0; findings "$work/absent.tsv" 2>/dev/null || rc=$?
+eq "a missing findings file is not read as nothing" 2 "$rc"
+
+echo "== digest.yml: only findings exit 1 closes the issue =="
+# The step's own run block, executed with gh and digest.sh stubbed.
+step="$work/step.sh"
+awk '
+    /- name: Open, update or close the issue/ { want = 1; next }
+    { l = $0; sub(/^ +/, "", l); ind = length($0) - length(l) }
+    want && l == "run: |" { runind = ind; inrun = 1; next }
+    inrun && l != "" && ind <= runind { exit }
+    inrun { print substr($0, runind + 3) }
+' "$ROOT/.github/workflows/digest.yml" > "$step"
+# shellcheck disable=SC2016  # stub source, expanded when the stub runs
+run_step() { # <findings-exit-code>; exit code in $rc, gh calls in $d/gh.log, output in $d/out
+    d="$work/step-$1"
+    mkdir -p "$d/scripts" "$d/bin"
+    printf '#!/bin/sh\n[ "$1" = findings ] && exit %s\necho body\n' "$1" > "$d/scripts/digest.sh"
+    printf '#!/bin/sh\necho "$*" >> "%s/gh.log"\n[ "$1 $2" = "issue list" ] && echo 5\nexit 0\n' "$d" > "$d/bin/gh"
+    : > "$d/gh.log"
+    chmod +x "$d/scripts/digest.sh" "$d/bin/gh"
+    rc=0
+    ( cd "$d" && PATH="$d/bin:$PATH" REPO=pkghaus/.github ASSIGNEE='' \
+        bash -e "$step" >"$d/out" 2>&1 ) || rc=$?
+}
+run_step 1
+case "$rc $(cat "$d/gh.log")" in
+    "0 "*"issue close 5"*) ok "findings exit 1 closes the open issue" ;;
+    *) no "findings exit 1 closes the open issue" "rc=$rc gh: $(cat "$d/gh.log")" ;; esac
+run_step 2
+case "$rc $(cat "$d/gh.log")" in
+    0*|*"issue close"*|*"issue edit"*|*"issue create"*)
+        no "findings exit 2 fails the job and leaves the issue alone" "rc=$rc gh: $(cat "$d/gh.log")" ;;
+    *) ok "findings exit 2 fails the job and leaves the issue alone" ;; esac
+case "$rc $(cat "$d/out")" in
+    "2 "*"::error title=digest.sh findings failed::exit 2"*) ok "the failure keeps the exit code and says so in an annotation" ;;
+    *) no "the failure keeps the exit code and says so in an annotation" "rc=$rc out: $(cat "$d/out")" ;; esac
+rc=0; "$ROOT/scripts/digest.sh" findings >/dev/null 2>&1 || rc=$?
+eq "findings with no file is a usage error, not nothing to report" 2 "$rc"
+run_step 0
+case "$rc $(cat "$d/gh.log")" in
+    "0 "*"issue edit 5"*) ok "findings exit 0 updates the open issue" ;;
+    *) no "findings exit 0 updates the open issue" "rc=$rc gh: $(cat "$d/gh.log")" ;; esac
 
 echo "== suppressions: known findings render but do not hold the issue open =="
 sup="$work/sup.tsv"
@@ -194,8 +244,8 @@ case "$body" in *"## npm audit"*) no "an empty section is omitted" "the heading 
                 *) ok "an empty section is omitted" ;; esac
 case "$body" in *"Not a status page"*) ok "the body says what the issue is for" ;;
                 *) no "the body says what the issue is for" ;; esac
-# The case for the tool existing belongs in the runbook, not in front of
-# someone trying to act. What must survive is the one thing that reads as a
+# The case for the tool existing does not belong in front of someone trying
+# to act. What must survive is the one thing that reads as a
 # defect and is not: npm audit naming a repository the alerts do not.
 case "$body" in *"under-report"*) ok "the body explains why npm audit differs from alerts" ;;
                 *) no "the body explains why npm audit differs from alerts" ;; esac
@@ -251,6 +301,25 @@ f="$(t 'pr\tapt\t7\tpassing\t1\tbump @scope/thing\n')"
 case "$(render "$f")" in
     *"&#64;scope/thing"*) ok "a pull request title is escaped too" ;;
     *) no "a pull request title is escaped too" ;; esac
+# Columns that never had an escape of their own: a manifest path and a blocked
+# key. The suppression is written with the raw @ and must still match.
+f="$(t 'audit\tapt\tpackages/@pkghaus/x\thigh\tsharp\tGHSA-y\n')"
+case "$(render "$f")" in
+    *"| apt | packages/&#64;pkghaus/x | high |"*) ok "an @ in an audit manifest path is escaped" ;;
+    *) no "an @ in an audit manifest path is escaped" "$(render "$f" | grep '^| apt' || echo 'no row')" ;; esac
+f="$(t 'audit\tapt\tpackages/@pkghaus/y\thigh\t@cloudflare/w\tGHSA-z\n')"
+case "$(render "$f")" in
+    *"| apt | packages/&#64;pkghaus/y | high | &#64;cloudflare/w |"*) ok "every @ in a row is escaped, not only the first" ;;
+    *) no "every @ in a row is escaped, not only the first" "$(render "$f" | grep '^| apt' || echo 'no row')" ;; esac
+scoped='npm_and_yarn in /. for @cloudflare/vitest-pool-workers'
+f="$(t "updater\tplausible-worker\t$scoped\t2026-09-11\nalert\tplausible-worker\tHIGH\t@cloudflare/vitest-pool-workers\tGHSA-q\n")"
+ssup="$work/scoped-sup.tsv"
+printf 'updater\tplausible-worker\t%s\t2099-01-01\tblocked upstream\n' "$scoped" > "$ssup"
+case "$(render "$f" "$ssup" 2026-09-13)" in
+    *"| plausible-worker | updater npm_and_yarn in /. for &#64;cloudflare/vitest-pool-workers | 2099-01-01 |"*)
+        ok "an @ in a blocked updater key is escaped" ;;
+    *) no "an @ in a blocked updater key is escaped" \
+          "$(render "$f" "$ssup" 2026-09-13 | grep '^| plausible-worker | updater' || echo 'no row')" ;; esac
 # The cc line is a mention on purpose and must survive.
 f="$(t 'alert\tapt\tHIGH\tsharp\tGHSA-x\n')"
 case "$(DIGEST_TEAM=pkghaus/maintainers render "$f")" in
@@ -346,11 +415,11 @@ case "$(render "$f")" in
     *) no "the section names both cases and explains not readable" ;; esac
 
 # On this plan a private repository is refused rulesets outright and secret
-# scanning needs paid Advanced Security, so every check here would fire on wiki
-# and brand every week forever. The live dry run produced exactly those four
+# scanning needs paid Advanced Security, so every check here would fire on every
+# private repository every week forever. The live dry run produced exactly those four
 # rows before this exemption existed.
-eq "a private repo yields nothing at all" "" "$(printf '%s' "$off" | coverage_rows wiki PRIVATE na)"
-eq "a private repo is not faulted for having no ruleset" "" "$(printf '%s' "$on" | coverage_rows brand PRIVATE na)"
+eq "a private repo yields nothing at all" "" "$(printf '%s' "$off" | coverage_rows private-a PRIVATE na)"
+eq "a private repo is not faulted for having no ruleset" "" "$(printf '%s' "$on" | coverage_rows private-b PRIVATE na)"
 
 # It must DRAIN stdin before deciding. Exiting early hands the producer an
 # EPIPE, which pipefail turns into a failed pipeline and set -e turns into an
@@ -358,7 +427,7 @@ eq "a private repo is not faulted for having no ruleset" "" "$(printf '%s' "$on"
 # audit, and rendered as a quiet week. Reproduced with a producer large enough
 # that it cannot have been buffered away.
 if ( set -o pipefail
-     python3 -c 'print("x" * 200000)' | coverage_rows wiki PRIVATE na >/dev/null ); then
+     python3 -c 'print("x" * 200000)' | coverage_rows private-a PRIVATE na >/dev/null ); then
     ok "an exempt repo still drains stdin, so the producer sees no EPIPE"
 else
     no "an exempt repo still drains stdin" "the pipeline failed, which set -e would make fatal"
