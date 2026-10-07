@@ -21,10 +21,10 @@
 set -euo pipefail
 shopt -s inherit_errexit
 
-ORG="${DIGEST_ORG:-pkghaus}"
+ORG=pkghaus
 # A pull request open this long has stopped being in flight and started being
 # ignored. Reported either way; this only changes how it is described.
-STALE_DAYS="${DIGEST_STALE_DAYS:-7}"
+STALE_DAYS=7
 
 # --- pure, and therefore the parts worth testing -----------------------------
 
