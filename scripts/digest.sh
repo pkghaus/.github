@@ -187,7 +187,7 @@ PREAMBLE
     n="$(grep -c . "$blk" || true)"
     if [ "$n" -gt 0 ]; then
         printf '## Known and blocked (%s)\n\n' "$n"
-        printf 'Not counted as needing attention. Each stops being suppressed on its review date, at which point it returns to the sections above.\n\n'
+        printf 'Not counted as needing attention. Each counts again the day after its review date, back in the sections above.\n\n'
         # Unfixable crowding: GitHub strips <nobr> and styled spans; U+2011 breaks copy-paste.
         printf '| repo | finding | review by | why |\n|:---|:---|:---|:---|\n'
         awk -F'\t' '{ printf "| %s | %s %s | %s | %s |\n", $2, $1, $3, $4, $5 }' "$blk"
@@ -369,6 +369,7 @@ fi
 case "${1:-}" in
     collect)  collect ;;
     render)   render "${2:?usage: digest.sh render <file>}" ;;
-    findings) findings "${2:?usage: digest.sh findings <file>}" ;;
+    findings) [ -n "${2:-}" ] || { echo "usage: digest.sh findings <file>" >&2; exit 2; }
+              findings "$2" ;;
     *) echo "usage: digest.sh {collect|render <file>|findings <file>}" >&2; exit 2 ;;
 esac
