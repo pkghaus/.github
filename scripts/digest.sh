@@ -49,12 +49,13 @@ KEY = {"audit": 5, "alert": 4, "cover": 2, "pr": 2, "updater": 2}   # zero-based
 # alert or audit row for that package. Any other job name always counts.
 SECURITY_JOB = re.compile(r"^\S+ in \S+ for ([^\s,]+)$")
 
-lines = []
-for line in open(rows):
-    line = line.rstrip("\n")
-    if not line.strip() or line.lstrip().startswith("#"):
-        continue
-    lines.append(line)
+def data(path):   # non-blank, non-comment lines
+    for line in open(path):
+        line = line.rstrip("\n")
+        if line.strip() and not line.lstrip().startswith("#"):
+            yield line
+
+lines = list(data(rows))
 
 carried = set()
 for line in lines:
@@ -66,10 +67,7 @@ for line in lines:
 
 rules = {}
 try:
-    for line in open(sup):
-        line = line.rstrip("\n")
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
+    for line in data(sup):
         f = line.split("\t")
         if len(f) < 5:
             continue
@@ -118,9 +116,8 @@ render() { # <file> [<suppressions-file>] [<today>]
     # The rows file reaches classify through "$@", along with the optional
     # suppressions path and date, so it is not referenced again by name here.
     local n act blk
-    act="$(mktemp)"; blk="$(mktemp)"
-    classify active "$@" | sed 's/@/\&#64;/g' > "$act"
-    classify blocked "$@" | sed 's/@/\&#64;/g' > "$blk"
+    act="$(classify active "$@" | sed 's/@/\&#64;/g')"
+    blk="$(classify blocked "$@" | sed 's/@/\&#64;/g')"
 
     # Short on purpose, and ONE LINE PER PARAGRAPH: in an issue body GitHub
     # renders a newline inside a paragraph as a line break.
@@ -134,7 +131,7 @@ Two things that look wrong and are not. A repository under **npm audit** but not
 PREAMBLE
     [ -z "${DIGEST_TEAM:-}" ] || printf '%s\n\n' "cc @${DIGEST_TEAM}"
 
-    n="$(awk -F'\t' '$1=="pr"' "$act" | wc -l)"
+    n="$(awk -F'\t' '$1=="pr"' <<< "$act" | wc -l)"
     if [ "$n" -gt 0 ]; then
         printf '## Open Dependabot pull requests (%s)\n\n' "$n"
         # Every delimiter row is left-aligned (:---). GitHub's markdown CSS sets
@@ -145,52 +142,52 @@ PREAMBLE
         awk -F'\t' -v s="$STALE_DAYS" -v org="$ORG" '$1=="pr" {
             age = ($5 >= s) ? $5 " days, stale" : $5 " days"
             printf "| %s | [#%s](https://github.com/%s/%s/pull/%s) | %s | %s | %s |\n", $2, $3, org, $2, $3, $4, age, $6
-        }' "$act"
+        }' <<< "$act"
         printf '\n'
     fi
 
-    n="$(awk -F'\t' '$1=="audit"' "$act" | wc -l)"
+    n="$(awk -F'\t' '$1=="audit"' <<< "$act" | wc -l)"
     if [ "$n" -gt 0 ]; then
         printf '## npm audit (%s)\n\n' "$n"
         printf 'One row per advisory, not per package in the chain.\n\n'
         printf '| repo | manifest | severity | package | advisory |\n|:---|:---|:---|:---|:---|\n'
-        awk -F'\t' '$1=="audit" { printf "| %s | %s | %s | %s | %s |\n", $2, $3, $4, $5, $6 }' "$act"
+        awk -F'\t' '$1=="audit" { printf "| %s | %s | %s | %s | %s |\n", $2, $3, $4, $5, $6 }' <<< "$act"
         printf '\n'
     fi
 
-    n="$(awk -F'\t' '$1=="alert"' "$act" | wc -l)"
+    n="$(awk -F'\t' '$1=="alert"' <<< "$act" | wc -l)"
     if [ "$n" -gt 0 ]; then
         printf '## Dependabot alerts (%s)\n\n' "$n"
         printf '| repo | severity | package | advisory |\n|:---|:---|:---|:---|\n'
-        awk -F'\t' '$1=="alert" { printf "| %s | %s | %s | %s |\n", $2, $3, $4, $5 }' "$act"
+        awk -F'\t' '$1=="alert" { printf "| %s | %s | %s | %s |\n", $2, $3, $4, $5 }' <<< "$act"
         printf '\n'
     fi
 
-    n="$(awk -F'\t' '$1=="updater"' "$act" | wc -l)"
+    n="$(awk -F'\t' '$1=="updater"' <<< "$act" | wc -l)"
     if [ "$n" -gt 0 ]; then
         printf '## Dependabot updater failing (%s)\n\n' "$n"
         printf 'The update job itself errored, so it opened no pull request and changed no alert. A repository whose updater is broken otherwise looks exactly like one with nothing to do.\n\n'
         printf '| repo | update job | failing since |\n|:---|:---|:---|\n'
-        awk -F'\t' '$1=="updater" { printf "| %s | %s | %s |\n", $2, $3, $4 }' "$act"
+        awk -F'\t' '$1=="updater" { printf "| %s | %s | %s |\n", $2, $3, $4 }' <<< "$act"
         printf '\n'
     fi
 
-    n="$(awk -F'\t' '$1=="cover"' "$act" | wc -l)"
+    n="$(awk -F'\t' '$1=="cover"' <<< "$act" | wc -l)"
     if [ "$n" -gt 0 ]; then
         printf '## Security settings not enabled or not readable (%s)\n\n' "$n"
         printf '%s\n\n' "None of these is inherited by a new repository. **not readable** means \`DIGEST_TOKEN\` has no admin access to that repository, which is true of any public repository created or recreated after the token until it is added to the token's repository selection."
         printf '| repo | setting | state |\n|:---|:---|:---|\n'
-        awk -F'\t' '$1=="cover" { printf "| %s | %s | %s |\n", $2, $3, $4 }' "$act"
+        awk -F'\t' '$1=="cover" { printf "| %s | %s | %s |\n", $2, $3, $4 }' <<< "$act"
         printf '\n'
     fi
 
-    n="$(grep -c . "$blk" || true)"
+    n="$(grep -c . <<< "$blk" || true)"
     if [ "$n" -gt 0 ]; then
         printf '## Known and blocked (%s)\n\n' "$n"
         printf 'Not counted as needing attention. Each counts again the day after its review date, back in the sections above.\n\n'
         # Unfixable crowding: GitHub strips <nobr> and styled spans; U+2011 breaks copy-paste.
         printf '| repo | finding | review by | why |\n|:---|:---|:---|:---|\n'
-        awk -F'\t' '{ printf "| %s | %s %s | %s | %s |\n", $2, $1, $3, $4, $5 }' "$blk"
+        awk -F'\t' '{ printf "| %s | %s %s | %s | %s |\n", $2, $1, $3, $4, $5 }' <<< "$blk"
         printf '\n'
     fi
 
@@ -198,8 +195,6 @@ PREAMBLE
     printf 'Last run %s' "${DIGEST_RUN_AT:-$(date -u +'%Y-%m-%d %H:%M:%S UTC')}"
     [ -z "${DIGEST_RUN_URL:-}" ] || printf ' ([run](%s))' "$DIGEST_RUN_URL"
     printf '. The body is rewritten in place on every run, so this timestamp is the age of what you are reading.\n'
-
-    rm -f "$act" "$blk"
 }
 
 # npm audit JSON for one manifest into rows, ONE PER ADVISORY. npm lists every
@@ -253,15 +248,13 @@ r = json.loads(data)
 # DIGEST_TOKEN cannot read this repo, not that scanning is off.
 if "security_and_analysis" not in r:
     print("\t".join(("cover", repo, "security settings", "not readable")))
-    sa = None
 else:
     sa = r.get("security_and_analysis") or {}
-def state(key):
-    return ((sa.get(key) or {}).get("status")) or "unset"
-for key, label in (("secret_scanning","secret scanning"),
-                   ("secret_scanning_push_protection","push protection")):
-    if sa is not None and state(key) != "enabled":
-        print("\t".join(("cover", repo, label, state(key))))
+    for key, label in (("secret_scanning","secret scanning"),
+                       ("secret_scanning_push_protection","push protection")):
+        state = ((sa.get(key) or {}).get("status")) or "unset"
+        if state != "enabled":
+            print("\t".join(("cover", repo, label, state)))
 if rulesets.isdigit() and int(rulesets) == 0:
     print("\t".join(("cover", repo, "ruleset", "none")))
 ' "$repo" "$vis" "$rulesets"

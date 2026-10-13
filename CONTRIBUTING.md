@@ -33,8 +33,8 @@ misbehaving, that is an archive problem and belongs on `apt`.
 
 ## Security
 
-Do not open an issue. See [SECURITY.md](SECURITY.md); the address is
-security@pkg.haus.
+Do not open an issue. See [SECURITY.md](SECURITY.md): report privately from
+the affected repository's **Security** tab, or email security@pkg.haus.
 
 ## Changing packaging
 
