@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_ASSERTIONS=117
+EXPECTED_ASSERTIONS=122
 fail=0
 TALLY="$(mktemp)"
 trap 'rm -f "$TALLY"' EXIT
@@ -229,6 +229,15 @@ f="$(t "${sec}alert\tplausible-worker\tHIGH\tesbuild\tGHSA-y\n")"
 case "$(render "$f")" in
     *"Dependabot updater"*) no "another package's finding does not keep it live" ;;
     *) ok "another package's finding does not keep it live" ;; esac
+# One job covers every alert Dependabot batched into it, named comma separated.
+multi='updater\tplausible-worker\tnpm_and_yarn in /. for @vitest/mocker, source-map-js, vite, vite\t2026-10-28\n'
+f="$(t "$multi")"
+if findings "$f"; then no "a settled multi-package security update does not hold the issue open"
+else ok "a settled multi-package security update does not hold the issue open"; fi
+f="$(t "${multi}alert\tplausible-worker\tHIGH\tvite\tGHSA-x\n")"
+case "$(render "$f")" in
+    *"## Dependabot updater failing (1)"*) ok "one live package keeps a multi-package security update live" ;;
+    *) no "one live package keeps a multi-package security update live" ;; esac
 # A name that is not "<ecosystem> in <dir> for <one package>" is kept: it is
 # reported rather than guessed away.
 f="$(t 'updater\tplausible-worker\tnpm_and_yarn in /. for the minor group\t2026-09-11\n')"
@@ -406,18 +415,20 @@ noreport "no audit output at all fails" '' 'no output'
 
 echo "== coverage_rows: only what is OFF, and rulesets only where they are possible =="
 on='{"security_and_analysis":{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"enabled"}}}'
-eq "a fully covered public repo yields nothing" "" "$(printf '%s' "$on" | coverage_rows apt PUBLIC 1)"
-case "$(printf '%s' "$on" | coverage_rows apt PUBLIC 0)" in
+eq "a fully covered public repo yields nothing" "" "$(printf '%s' "$on" | coverage_rows apt PUBLIC 1 enabled)"
+case "$(printf '%s' "$on" | coverage_rows apt PUBLIC 0 enabled)" in
     *$'cover\tapt\truleset\tnone'*) ok "a public repo with no ruleset is a finding" ;;
     *) no "a public repo with no ruleset is a finding" ;; esac
 off='{"security_and_analysis":{"secret_scanning":{"status":"disabled"}}}'
-out="$(printf '%s' "$off" | coverage_rows new PUBLIC 1)"
+out="$(printf '%s' "$off" | coverage_rows new PUBLIC 1 enabled)"
 eq "both scanning settings are reported when off or unset" 2 "$(printf '%s\n' "$out" | grep -c .)"
+eq "a public repo with the dependency graph off is one row" \
+   "$(printf 'cover\tapt\tdependency graph\tdisabled')" "$(printf '%s' "$on" | coverage_rows apt PUBLIC 1 disabled)"
 
 # GitHub returns security_and_analysis only to a caller with admin access, so a
 # repo the token cannot see has no block at all. That is not two settings off:
 # it rendered as "unset" twice for reproducible, whose settings were on.
-out="$(printf '%s' '{"name":"x"}' | coverage_rows reproducible PUBLIC 1)"
+out="$(printf '%s' '{"name":"x"}' | coverage_rows reproducible PUBLIC 1 enabled)"
 eq "a repo the token cannot see is one not-readable row" \
    "$(printf 'cover\treproducible\tsecurity settings\tnot readable')" "$out"
 case "$out" in
@@ -433,8 +444,8 @@ case "$(render "$f")" in
 # scanning needs paid Advanced Security, so every check here would fire on every
 # private repository every week forever. The live dry run produced exactly those four
 # rows before this exemption existed.
-eq "a private repo yields nothing at all" "" "$(printf '%s' "$off" | coverage_rows private-a PRIVATE 0)"
-eq "a private repo is not faulted for having no ruleset" "" "$(printf '%s' "$on" | coverage_rows private-b PRIVATE 0)"
+eq "a private repo yields nothing at all" "" "$(printf '%s' "$off" | coverage_rows private-a PRIVATE 0 disabled)"
+eq "a private repo is not faulted for having no ruleset" "" "$(printf '%s' "$on" | coverage_rows private-b PRIVATE 0 disabled)"
 
 # It must DRAIN stdin before deciding. Exiting early hands the producer an
 # EPIPE, which pipefail turns into a failed pipeline and set -e turns into an
@@ -442,7 +453,7 @@ eq "a private repo is not faulted for having no ruleset" "" "$(printf '%s' "$on"
 # audit, and rendered as a quiet week. Reproduced with a producer large enough
 # that it cannot have been buffered away.
 if ( set -o pipefail
-     python3 -c 'print("x" * 200000)' | coverage_rows private-a PRIVATE 0 >/dev/null ); then
+     python3 -c 'print("x" * 200000)' | coverage_rows private-a PRIVATE 0 disabled >/dev/null ); then
     ok "an exempt repo still drains stdin, so the producer sees no EPIPE"
 else
     no "an exempt repo still drains stdin" "the pipeline failed, which set -e would make fatal"
@@ -619,16 +630,25 @@ fresh; audited; rm "$fx/$manifest.json"
 collector collect_audit apt
 refused "a refused package.json read fails, and says why"
 
-fresh; fixture repos/pkghaus/apt/rulesets '[{"id":1}]'; fixture repos/pkghaus/apt "$on"
+sbom=repos/pkghaus/apt/dependency-graph/sbom
+fresh; fixture repos/pkghaus/apt/rulesets '[{"id":1}]'; fixture repos/pkghaus/apt "$on"; fixture "$sbom" '{"sbom":{}}'
 collector collect_coverage apt PUBLIC
 nothing "a fully covered public repository is no rows"
-fresh; fixture repos/pkghaus/apt/rulesets '[]'; fixture repos/pkghaus/apt "$on"
+fresh; fixture repos/pkghaus/apt/rulesets '[]'; fixture repos/pkghaus/apt "$on"; fixture "$sbom" '{"sbom":{}}'
 collector collect_coverage apt PUBLIC
 eq "a public repository with no ruleset is one row" "0:$(printf 'cover\tapt\truleset\tnone')" "$rc:$out"
-fresh; fixture repos/pkghaus/apt "$on"
+# The SBOM export's 404 is how GitHub says the graph is off.
+fresh; fixture repos/pkghaus/apt/rulesets '[{"id":1}]'; fixture repos/pkghaus/apt "$on"
+collector collect_coverage apt PUBLIC
+eq "a 404 from the SBOM export is the dependency graph off" \
+   "0:$(printf 'cover\tapt\tdependency graph\tdisabled')" "$rc:$out"
+fresh; fixture repos/pkghaus/apt/rulesets '[{"id":1}]'; fixture repos/pkghaus/apt "$on"; : > "$fx/bodyless"
+collector collect_coverage apt PUBLIC
+refused "any other failed SBOM read fails, and says why"
+fresh; fixture repos/pkghaus/apt "$on"; fixture "$sbom" '{"sbom":{}}'
 collector collect_coverage apt PUBLIC
 refused "a refused ruleset read fails, and says why"
-fresh; fixture repos/pkghaus/apt/rulesets '[]'
+fresh; fixture repos/pkghaus/apt/rulesets '[]'; fixture "$sbom" '{"sbom":{}}'
 collector collect_coverage apt PUBLIC
 refused "a refused repository read fails, and says why"
 fresh
@@ -649,6 +669,7 @@ org() {
         fixture "repos/pkghaus/$r/git/trees/HEAD" '{"tree":[]}'
         fixture "repos/pkghaus/$r/rulesets" '[{"id":1}]'
         fixture "repos/pkghaus/$r" "$on"
+        fixture "repos/pkghaus/$r/dependency-graph/sbom" '{"sbom":{}}'
     done
 }
 fresh; org
