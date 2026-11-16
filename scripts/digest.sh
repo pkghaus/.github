@@ -44,10 +44,10 @@ import re, sys
 mode, rows, sup, today = sys.argv[1:5]
 KEY = {"audit": 5, "alert": 4, "cover": 2, "pr": 2, "updater": 2}   # zero-based field index
 
-# A security-update job ("npm_and_yarn in /. for sharp") never runs again once
-# its package is fixed, so its failure counts only while this repo still has an
-# alert or audit row for that package. Any other job name always counts.
-SECURITY_JOB = re.compile(r"^\S+ in \S+ for ([^\s,]+)$")
+# A security-update job ("npm_and_yarn in /. for sharp, vite") never runs again
+# once its packages are fixed, so its failure counts only while this repo still
+# has an alert or audit row for one of them. Any other job name always counts.
+SECURITY_JOB = re.compile(r"^\S+ in \S+ for ([^\s,]+(?:, [^\s,]+)*)$")
 
 def data(path):   # non-blank, non-comment lines
     for line in open(path):
@@ -79,7 +79,7 @@ for line in lines:
     f = line.split("\t")
     if f[0] == "updater" and len(f) > 2:
         m = SECURITY_JOB.match(f[2])
-        if m and (f[1], m.group(1)) not in carried:
+        if m and not any((f[1], p) in carried for p in m.group(1).split(", ")):
             continue   # settled: nothing left for this job to fix
     idx = KEY.get(f[0])
     key = f[idx] if idx is not None and len(f) > idx else None
@@ -175,7 +175,7 @@ PREAMBLE
     n="$(awk -F'\t' '$1=="cover"' <<< "$act" | wc -l)"
     if [ "$n" -gt 0 ]; then
         printf '## Security settings not enabled or not readable (%s)\n\n' "$n"
-        printf '%s\n\n' "None of these is inherited by a new repository. **not readable** means \`DIGEST_TOKEN\` has no admin access to that repository, which is true of any public repository created or recreated after the token until it is added to the token's repository selection."
+        printf '%s\n\n' "A new public repository takes the scanning settings and the dependency graph from the org's default code security configuration, but no ruleset. **not readable** means \`DIGEST_TOKEN\` has no admin access to that repository, which is true of any public repository created or recreated after the token until it is added to the token's repository selection."
         printf '| repo | setting | state |\n|:---|:---|:---|\n'
         awk -F'\t' '$1=="cover" { printf "| %s | %s | %s |\n", $2, $3, $4 }' <<< "$act"
         printf '\n'
@@ -232,12 +232,12 @@ for name, v in sorted(a["vulnerabilities"].items()):
 # Repository JSON into rows for whatever is off. Private repositories are
 # exempt: on this plan rulesets are refused and secret scanning needs paid
 # Advanced Security, so those rows could never be acted on.
-coverage_rows() { # <repo> <visibility> <ruleset-count>   (repo JSON on stdin)
-    local repo="${1:?}" vis="${2:?}" rulesets="${3:?}"
+coverage_rows() { # <repo> <visibility> <ruleset-count> <graph>   (repo JSON on stdin)
+    local repo="${1:?}" vis="${2:?}" rulesets="${3:?}" graph="${4:?}"
     # shellcheck disable=SC2016  # python source, the shell must expand nothing
     python3 -c '
 import json,sys
-repo, vis, rulesets = sys.argv[1], sys.argv[2], sys.argv[3]
+repo, vis, rulesets, graph = sys.argv[1:5]
 # Drain stdin before exiting, or the producer gets EPIPE and pipefail with
 # set -e aborts the whole run.
 data = sys.stdin.read()
@@ -257,7 +257,26 @@ else:
             print("\t".join(("cover", repo, label, state)))
 if rulesets.isdigit() and int(rulesets) == 0:
     print("\t".join(("cover", repo, "ruleset", "none")))
-' "$repo" "$vis" "$rulesets"
+# Without the graph Dependabot still raises alerts, against a stale view, and
+# never closes them.
+if graph != "enabled":
+    print("\t".join(("cover", repo, "dependency graph", graph)))
+' "$repo" "$vis" "$rulesets" "$graph"
+}
+
+# Asking for an SBOM report answers 404 exactly when the dependency graph is
+# off, and 201 when it is on (it also queues the report, which is never read).
+# Any other failed read fails the run, like every read here.
+graph_state() { # <repo>
+    local err
+    if err="$(gh api "repos/$ORG/$1/dependency-graph/sbom/generate-report" --silent 2>&1)"; then
+        echo enabled
+    elif [[ "$err" == *"(HTTP 404)"* ]]; then
+        echo disabled
+    else
+        printf '%s\n' "$err" >&2
+        return 1
+    fi
 }
 
 # --- collection, which needs a network and a token ---------------------------
@@ -350,10 +369,11 @@ collect_audit() { # <repo>
 
 # Security settings, public repositories only (coverage_rows says why).
 collect_coverage() { # <repo> <visibility>
-    local repo="$1" vis="$2" rulesets
+    local repo="$1" vis="$2" rulesets graph
     [ "$vis" = PUBLIC ] || return 0
     rulesets="$(gh api "repos/$ORG/$repo/rulesets" --jq 'length')"
-    gh api "repos/$ORG/$repo" | coverage_rows "$repo" "$vis" "$rulesets"
+    graph="$(graph_state "$repo")"
+    gh api "repos/$ORG/$repo" | coverage_rows "$repo" "$vis" "$rulesets" "$graph"
 }
 
 collect() {
