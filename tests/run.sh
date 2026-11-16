@@ -630,25 +630,25 @@ fresh; audited; rm "$fx/$manifest.json"
 collector collect_audit apt
 refused "a refused package.json read fails, and says why"
 
-sbom=repos/pkghaus/apt/dependency-graph/sbom
-fresh; fixture repos/pkghaus/apt/rulesets '[{"id":1}]'; fixture repos/pkghaus/apt "$on"; fixture "$sbom" '{"sbom":{}}'
+sbom=repos/pkghaus/apt/dependency-graph/sbom/generate-report
+fresh; fixture repos/pkghaus/apt/rulesets '[{"id":1}]'; fixture repos/pkghaus/apt "$on"; fixture "$sbom" '{"sbom_url":"x"}'
 collector collect_coverage apt PUBLIC
 nothing "a fully covered public repository is no rows"
-fresh; fixture repos/pkghaus/apt/rulesets '[]'; fixture repos/pkghaus/apt "$on"; fixture "$sbom" '{"sbom":{}}'
+fresh; fixture repos/pkghaus/apt/rulesets '[]'; fixture repos/pkghaus/apt "$on"; fixture "$sbom" '{"sbom_url":"x"}'
 collector collect_coverage apt PUBLIC
 eq "a public repository with no ruleset is one row" "0:$(printf 'cover\tapt\truleset\tnone')" "$rc:$out"
-# The SBOM export's 404 is how GitHub says the graph is off.
+# A 404 on the SBOM report request is how GitHub says the graph is off.
 fresh; fixture repos/pkghaus/apt/rulesets '[{"id":1}]'; fixture repos/pkghaus/apt "$on"
 collector collect_coverage apt PUBLIC
-eq "a 404 from the SBOM export is the dependency graph off" \
+eq "a 404 on the SBOM report request is the dependency graph off" \
    "0:$(printf 'cover\tapt\tdependency graph\tdisabled')" "$rc:$out"
 fresh; fixture repos/pkghaus/apt/rulesets '[{"id":1}]'; fixture repos/pkghaus/apt "$on"; : > "$fx/bodyless"
 collector collect_coverage apt PUBLIC
-refused "any other failed SBOM read fails, and says why"
-fresh; fixture repos/pkghaus/apt "$on"; fixture "$sbom" '{"sbom":{}}'
+refused "any other failed SBOM request fails, and says why"
+fresh; fixture repos/pkghaus/apt "$on"; fixture "$sbom" '{"sbom_url":"x"}'
 collector collect_coverage apt PUBLIC
 refused "a refused ruleset read fails, and says why"
-fresh; fixture repos/pkghaus/apt/rulesets '[]'; fixture "$sbom" '{"sbom":{}}'
+fresh; fixture repos/pkghaus/apt/rulesets '[]'; fixture "$sbom" '{"sbom_url":"x"}'
 collector collect_coverage apt PUBLIC
 refused "a refused repository read fails, and says why"
 fresh
@@ -669,7 +669,7 @@ org() {
         fixture "repos/pkghaus/$r/git/trees/HEAD" '{"tree":[]}'
         fixture "repos/pkghaus/$r/rulesets" '[{"id":1}]'
         fixture "repos/pkghaus/$r" "$on"
-        fixture "repos/pkghaus/$r/dependency-graph/sbom" '{"sbom":{}}'
+        fixture "repos/pkghaus/$r/dependency-graph/sbom/generate-report" '{"sbom_url":"x"}'
     done
 }
 fresh; org

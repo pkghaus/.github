@@ -264,11 +264,12 @@ if graph != "enabled":
 ' "$repo" "$vis" "$rulesets" "$graph"
 }
 
-# The SBOM export answers 404 exactly when the dependency graph is off. Any
-# other failed read fails the run, like every read here.
+# Asking for an SBOM report answers 404 exactly when the dependency graph is
+# off, and 201 when it is on (it also queues the report, which is never read).
+# Any other failed read fails the run, like every read here.
 graph_state() { # <repo>
     local err
-    if err="$(gh api "repos/$ORG/$1/dependency-graph/sbom" --silent 2>&1)"; then
+    if err="$(gh api "repos/$ORG/$1/dependency-graph/sbom/generate-report" --silent 2>&1)"; then
         echo enabled
     elif [[ "$err" == *"(HTTP 404)"* ]]; then
         echo disabled
